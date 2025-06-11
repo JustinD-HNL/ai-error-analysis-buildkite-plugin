@@ -79,17 +79,19 @@ echo "Configured AI providers: ${AI_PROVIDERS}"
 validate_ai_providers_and_secrets() {
   local providers="$1"
   
-  python3 -c "
+  # Create temporary Python script for validation
+  local temp_script=$(mktemp)
+  cat > "${temp_script}" << 'EOF'
 import json
 import os
 import sys
 import subprocess
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
 
 def get_secret_aws(secret_name, region='us-east-1'):
-    \"\"\"Retrieve secret from AWS Secrets Manager\"\"\"
+    """Retrieve secret from AWS Secrets Manager"""
     try:
+        import boto3
+        from botocore.exceptions import ClientError, NoCredentialsError
         session = boto3.session.Session()
         client = session.client('secretsmanager', region_name=region)
         response = client.get_secret_value(SecretId=secret_name)
@@ -98,12 +100,15 @@ def get_secret_aws(secret_name, region='us-east-1'):
     except (ClientError, NoCredentialsError) as e:
         print(f'❌ AWS Secrets Manager error for {secret_name}: {e}')
         return None
+    except ImportError:
+        print(f'⚠️ boto3 not available for AWS Secrets Manager')
+        return None
     except Exception as e:
         print(f'❌ Error retrieving AWS secret {secret_name}: {e}')
         return None
 
 def get_secret_vault(vault_path):
-    \"\"\"Retrieve secret from HashiCorp Vault\"\"\"
+    """Retrieve secret from HashiCorp Vault"""
     try:
         result = subprocess.run(
             ['vault', 'kv', 'get', '-format=json', vault_path],
@@ -123,7 +128,7 @@ def get_secret_vault(vault_path):
         return None
 
 def get_secret_gcp(secret_name):
-    \"\"\"Retrieve secret from GCP Secret Manager\"\"\"
+    """Retrieve secret from GCP Secret Manager"""
     try:
         result = subprocess.run(
             ['gcloud', 'secrets', 'versions', 'access', 'latest', '--secret', secret_name, '--format=get(payload.data)', '--decode'],
@@ -142,7 +147,7 @@ def get_secret_gcp(secret_name):
         return None
 
 def validate_model_name(provider, model):
-    \"\"\"Validate that model name is supported\"\"\"
+    """Validate that model name is supported"""
     valid_models = {
         'openai': ['gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'o4-mini', 'gpt-3.5-turbo'],
         'claude': ['claude-opus-4', 'claude-sonnet-4', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
@@ -151,99 +156,113 @@ def validate_model_name(provider, model):
     
     return model in valid_models.get(provider, [])
 
-try:
-    providers = json.loads('${AI_PROVIDERS}')
-    if not isinstance(providers, list):
-        providers = [providers]
-    
-    missing_secrets = []
-    invalid_models = []
-    secret_access_errors = []
-    
-    for provider in providers:
-        name = provider.get('name', '').lower()
-        model = provider.get('model', '')
-        secret_source = provider.get('secret_source', {})
+def main():
+    try:
+        providers_json = sys.argv[1] if len(sys.argv) > 1 else '[]'
+        providers = json.loads(providers_json)
+        if not isinstance(providers, list):
+            providers = [providers]
         
-        # Validate model name
-        if not validate_model_name(name, model):
-            invalid_models.append(f'{name}: {model}')
+        missing_secrets = []
+        invalid_models = []
+        secret_access_errors = []
         
-        # Handle secret management
-        secret_type = secret_source.get('type', 'env_var')
-        secret_value = None
-        
-        if secret_type == 'aws_secrets_manager':
-            secret_name = secret_source.get('name')
-            region = secret_source.get('region', 'us-east-1')
-            if secret_name:
-                secret_value = get_secret_aws(secret_name, region)
+        for provider in providers:
+            name = provider.get('name', '').lower()
+            model = provider.get('model', '')
+            secret_source = provider.get('secret_source', {})
+            
+            # Validate model name
+            if not validate_model_name(name, model):
+                invalid_models.append(f'{name}: {model}')
+            
+            # Handle secret management
+            secret_type = secret_source.get('type', 'env_var')
+            secret_value = None
+            
+            if secret_type == 'aws_secrets_manager':
+                secret_name = secret_source.get('name')
+                region = secret_source.get('region', 'us-east-1')
+                if secret_name:
+                    secret_value = get_secret_aws(secret_name, region)
+                else:
+                    missing_secrets.append(f'{name}: missing secret_source.name for AWS Secrets Manager')
+            
+            elif secret_type == 'vault':
+                vault_path = secret_source.get('vault_path')
+                if vault_path:
+                    secret_value = get_secret_vault(vault_path)
+                else:
+                    missing_secrets.append(f'{name}: missing secret_source.vault_path for Vault')
+            
+            elif secret_type == 'gcp_secret_manager':
+                secret_name = secret_source.get('name')
+                if secret_name:
+                    secret_value = get_secret_gcp(secret_name)
+                else:
+                    missing_secrets.append(f'{name}: missing secret_source.name for GCP Secret Manager')
+            
+            elif secret_type == 'env_var':
+                # Fallback to environment variable
+                api_key_env = secret_source.get('name', f'{name.upper()}_API_KEY')
+                secret_value = os.environ.get(api_key_env)
+                if not secret_value:
+                    missing_secrets.append(f'{name}: {api_key_env} (environment variable)')
+            
             else:
-                missing_secrets.append(f'{name}: missing secret_source.name for AWS Secrets Manager')
+                missing_secrets.append(f'{name}: unknown secret_source.type: {secret_type}')
+            
+            # Validate secret was retrieved
+            if secret_value is None and secret_type != 'env_var':
+                secret_access_errors.append(f'{name}: failed to retrieve secret via {secret_type}')
         
-        elif secret_type == 'vault':
-            vault_path = secret_source.get('vault_path')
-            if vault_path:
-                secret_value = get_secret_vault(vault_path)
-            else:
-                missing_secrets.append(f'{name}: missing secret_source.vault_path for Vault')
+        # Report validation results
+        if invalid_models:
+            print('❌ Invalid AI models detected:')
+            for model in invalid_models:
+                print(f'  - {model}')
+            print('Please use supported 2025 model names.')
+            sys.exit(1)
         
-        elif secret_type == 'gcp_secret_manager':
-            secret_name = secret_source.get('name')
-            if secret_name:
-                secret_value = get_secret_gcp(secret_name)
-            else:
-                missing_secrets.append(f'{name}: missing secret_source.name for GCP Secret Manager')
+        if missing_secrets:
+            print('❌ Missing or inaccessible API secrets:')
+            for secret in missing_secrets:
+                print(f'  - {secret}')
+            print('Please configure external secret management or set environment variables.')
+            sys.exit(1)
         
-        elif secret_type == 'env_var':
-            # Fallback to environment variable
-            api_key_env = secret_source.get('name', f'{name.upper()}_API_KEY')
-            secret_value = os.environ.get(api_key_env)
-            if not secret_value:
-                missing_secrets.append(f'{name}: {api_key_env} (environment variable)')
+        if secret_access_errors:
+            print('⚠️ Secret access warnings:')
+            for error in secret_access_errors:
+                print(f'  - {error}')
+            # Don't fail on warnings, just log them
         
-        else:
-            missing_secrets.append(f'{name}: unknown secret_source.type: {secret_type}')
-        
-        # Validate secret was retrieved
-        if secret_value is None and secret_type != 'env_var':
-            secret_access_errors.append(f'{name}: failed to retrieve secret via {secret_type}')
-    
-    # Report validation results
-    if invalid_models:
-        print('❌ Invalid AI models detected:')
-        for model in invalid_models:
-            print(f'  - {model}')
-        print('Please use supported 2025 model names.')
+        if not missing_secrets and not invalid_models:
+            print('✅ All AI providers and secrets validated successfully')
+            
+    except json.JSONDecodeError as e:
+        print(f'❌ Invalid AI providers configuration JSON: {e}')
         sys.exit(1)
-    
-    if missing_secrets:
-        print('❌ Missing or inaccessible API secrets:')
-        for secret in missing_secrets:
-            print(f'  - {secret}')
-        print('Please configure external secret management or set environment variables.')
+    except ImportError as e:
+        print(f'⚠️ Optional dependency missing: {e}')
+        print('Some secret management features may be unavailable.')
+        print('✅ Proceeding with environment variable fallback')
+    except Exception as e:
+        print(f'❌ Error validating AI providers: {e}')
         sys.exit(1)
-    
-    if secret_access_errors:
-        print('⚠️ Secret access warnings:')
-        for error in secret_access_errors:
-            print(f'  - {error}')
-        # Don't fail on warnings, just log them
-    
-    if not missing_secrets and not invalid_models:
-        print('✅ All AI providers and secrets validated successfully')
-        
-except json.JSONDecodeError as e:
-    print(f'❌ Invalid AI providers configuration JSON: {e}')
-    sys.exit(1)
-except ImportError as e:
-    print(f'⚠️ Optional dependency missing: {e}')
-    print('Some secret management features may be unavailable.')
-    print('✅ Proceeding with environment variable fallback')
-except Exception as e:
-    print(f'❌ Error validating AI providers: {e}')
-    sys.exit(1)
-"
+
+if __name__ == "__main__":
+    main()
+EOF
+
+  # Execute the Python script with the providers configuration
+  python3 "${temp_script}" "${providers}"
+  local exit_code=$?
+  
+  # Clean up temporary script
+  rm -f "${temp_script}"
+  
+  return $exit_code
 }
 
 # Only validate secrets if not in dry run mode
@@ -365,23 +384,43 @@ validate_repository_access() {
   fi
   
   # Check if current branch is allowed
-  python3 -c "
+  local temp_script=$(mktemp)
+  cat > "${temp_script}" << 'EOF'
 import json
 import sys
 
-allowed = json.loads('${allowed_branches}')
-current_branch = '${branch}'
+def main():
+    try:
+        allowed_json = sys.argv[1] if len(sys.argv) > 1 else '[]'
+        current_branch = sys.argv[2] if len(sys.argv) > 2 else ''
+        
+        allowed = json.loads(allowed_json)
+        
+        if not allowed or current_branch in allowed:
+            print(f'✅ Branch "{current_branch}" is allowed for AI analysis')
+        else:
+            print(f'ℹ️ Branch "{current_branch}" not in allowed list: {allowed}')
+            print('Skipping AI error analysis for this branch')
+            # Set flag to skip analysis but don't fail the build
+            sys.exit(42)  # Special exit code to indicate skip
+            
+    except json.JSONDecodeError as e:
+        print(f'❌ Invalid branch configuration JSON: {e}')
+        sys.exit(1)
+    except Exception as e:
+        print(f'❌ Error validating branch: {e}')
+        sys.exit(1)
 
-if not allowed or current_branch in allowed:
-    print(f'✅ Branch \"{current_branch}\" is allowed for AI analysis')
-else:
-    print(f'ℹ️ Branch \"{current_branch}\" not in allowed list: {allowed}')
-    print('Skipping AI error analysis for this branch')
-    # Set flag to skip analysis but don't fail the build
-    sys.exit(42)  # Special exit code to indicate skip
-"
+if __name__ == "__main__":
+    main()
+EOF
   
+  python3 "${temp_script}" "${allowed_branches}" "${branch}"
   local exit_code=$?
+  
+  # Clean up temporary script
+  rm -f "${temp_script}"
+  
   if [[ $exit_code -eq 42 ]]; then
     export AI_ERROR_ANALYSIS_SKIP="true"
     return 0
@@ -418,7 +457,8 @@ install_dependencies() {
   local lib_dir="${PLUGIN_DIR}/lib"
   
   # Check if required libraries are available
-  python3 -c "
+  local temp_script=$(mktemp)
+  cat > "${temp_script}" << 'EOF'
 import sys
 missing_deps = []
 
@@ -438,7 +478,9 @@ if missing_deps:
     sys.exit(1)
 else:
     print('✅ Python dependencies satisfied')
-" || {
+EOF
+
+  if ! python3 "${temp_script}"; then
     echo "📦 Installing required Python packages..."
     
     # Install with user flag for security
@@ -452,7 +494,10 @@ else:
     python3 -m pip install --user --no-cache-dir boto3 2>/dev/null || {
       echo "ℹ️ boto3 not installed - AWS Secrets Manager will be unavailable"
     }
-  }
+  fi
+  
+  # Clean up temporary script
+  rm -f "${temp_script}"
 }
 
 install_dependencies

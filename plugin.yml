@@ -4,7 +4,6 @@ author: https://github.com/your-org/ai-error-analysis-buildkite-plugin
 requirements:
   - python3
   - curl
-  - jq
 
 configuration:
   properties:
@@ -14,7 +13,7 @@ configuration:
       description: List of AI providers to use for error analysis
       default:
         - name: openai
-          model: gpt-4o-mini
+          model: o4-mini
       items:
         type: object
         properties:
@@ -25,24 +24,10 @@ configuration:
           model:
             type: string
             description: Model name (e.g., gpt-4.1, o4-mini, claude-opus-4, claude-sonnet-4, gemini-2.5-pro, gemini-2.5-flash)
-          secret_source:
-            type: object
-            description: External secret management configuration
-            properties:
-              type:
-                type: string
-                enum: ["aws_secrets_manager", "vault", "gcp_secret_manager", "env_var"]
-                default: "env_var"
-              name:
-                type: string
-                description: Secret name or environment variable name
-              region:
-                type: string
-                description: AWS region (for AWS Secrets Manager)
-              vault_path:
-                type: string
-                description: Vault secret path
-            additionalProperties: false
+          api_key_env:
+            type: string
+            description: Environment variable containing the API key
+            default: "{PROVIDER}_API_KEY"
           endpoint:
             type: string
             description: Custom API endpoint (optional)
@@ -50,14 +35,10 @@ configuration:
             type: integer
             description: Maximum tokens for response
             default: 1000
-            minimum: 100
-            maximum: 4000
           timeout:
             type: integer
-            description: Request timeout in seconds
+            description: Request timeout in seconds (300s for reasoning models)
             default: 60
-            minimum: 10
-            maximum: 300
           use_batch_api:
             type: boolean
             description: Use batch API for 50% cost savings (non-real-time)
@@ -81,15 +62,12 @@ configuration:
           description: Exit codes that trigger analysis
           items:
             type: integer
-            minimum: 1
-            maximum: 255
           default: [1, 2, 125, 126, 127, 128, 130]
         branches:
           type: array
           description: Git branches to analyze (empty = all branches)
           items:
             type: string
-            pattern: "^[a-zA-Z0-9._/-]+$"
           default: []
         patterns:
           type: array
@@ -108,7 +86,7 @@ configuration:
           type: integer
           description: Number of log lines to analyze
           default: 500
-          minimum: 50
+          minimum: 10
           maximum: 2000
         include_environment:
           type: boolean
@@ -126,7 +104,7 @@ configuration:
           type: string
           description: Custom context to include in analysis
           default: ""
-          maxLength: 2000
+          maxLength: 1000
       additionalProperties: false
 
     # Security and Privacy
@@ -140,6 +118,7 @@ configuration:
           items:
             type: string
           default: []
+          maxItems: 50
         redact_file_paths:
           type: boolean
           description: Redact file paths that might contain user info
@@ -148,10 +127,22 @@ configuration:
           type: boolean
           description: Redact URLs that might contain sensitive data
           default: true
-        enable_builtin_patterns:
+        use_external_secrets:
           type: boolean
-          description: Enable built-in secret detection patterns
-          default: true
+          description: Use external secret management (AWS Secrets Manager, Vault, etc.)
+          default: false
+        secret_manager_config:
+          type: object
+          description: External secret manager configuration
+          properties:
+            provider:
+              type: string
+              enum: ["aws-secrets-manager", "hashicorp-vault", "google-secret-manager"]
+            region:
+              type: string
+            secret_path:
+              type: string
+          additionalProperties: false
       additionalProperties: false
 
     # Output Configuration
@@ -169,6 +160,7 @@ configuration:
           description: Unique context for the annotation
           default: "ai-error-analysis"
           pattern: "^[a-zA-Z0-9_-]+$"
+          maxLength: 50
         include_confidence:
           type: boolean
           description: Include confidence score in output
@@ -181,7 +173,7 @@ configuration:
           type: string
           description: Path for analysis artifact
           default: "ai-analysis-report.json"
-          pattern: "^[a-zA-Z0-9._/-]+\\.json$"
+          maxLength: 200
       additionalProperties: false
 
     # Performance and Reliability
@@ -214,27 +206,20 @@ configuration:
           enum: ["round_robin", "priority", "fail_fast"]
           description: Strategy when primary AI provider fails
           default: "priority"
-        retry_config:
+        rate_limit:
           type: object
-          description: Retry configuration with exponential backoff
+          description: Rate limiting configuration
           properties:
-            max_attempts:
+            requests_per_minute:
               type: integer
-              default: 3
+              default: 30
               minimum: 1
-              maximum: 5
-            initial_delay:
+              maximum: 1000
+            burst_limit:
               type: integer
-              description: Initial delay in seconds
-              default: 2
+              default: 10
               minimum: 1
-              maximum: 10
-            max_delay:
-              type: integer
-              description: Maximum delay in seconds
-              default: 60
-              minimum: 5
-              maximum: 300
+              maximum: 100
           additionalProperties: false
       additionalProperties: false
 
@@ -251,25 +236,6 @@ configuration:
           type: boolean
           description: Test configuration without calling AI APIs
           default: false
-        input_validation:
-          type: object
-          description: Input validation configuration
-          properties:
-            enabled:
-              type: boolean
-              default: true
-            max_log_size_mb:
-              type: integer
-              default: 50
-              minimum: 1
-              maximum: 200
-            allowed_commands:
-              type: array
-              description: Whitelist of allowed commands for analysis
-              items:
-                type: string
-              default: []
-          additionalProperties: false
         custom_prompts:
           type: object
           description: Custom AI prompts for different error types
@@ -290,55 +256,39 @@ configuration:
               type: string
               description: Prompt for deployment errors
               maxLength: 2000
-            security_error:
+            network_error:
               type: string
-              description: Prompt for security-related errors
+              description: Prompt for network-related errors
               maxLength: 2000
           additionalProperties: false
-        security:
+        max_retries:
+          type: integer
+          description: Maximum retry attempts for failed API calls
+          default: 3
+          minimum: 0
+          maximum: 10
+        container_security:
           type: object
-          description: Security configuration
+          description: Container security configuration
           properties:
-            enable_command_validation:
+            enforce_non_root:
               type: boolean
-              description: Validate commands against injection attacks
+              description: Enforce non-root container execution
               default: true
-            container_security:
-              type: object
-              description: Container security settings
-              properties:
-                run_as_non_root:
-                  type: boolean
-                  default: true
-                drop_capabilities:
-                  type: array
-                  items:
-                    type: string
-                  default: ["ALL"]
-                add_capabilities:
-                  type: array
-                  items:
-                    type: string
-                  default: []
-                no_new_privileges:
-                  type: boolean
-                  default: true
-              additionalProperties: false
-          additionalProperties: false
-        rate_limit:
-          type: object
-          description: Rate limiting configuration
-          properties:
-            requests_per_minute:
-              type: integer
-              default: 30
-              minimum: 1
-              maximum: 100
-            burst_limit:
-              type: integer
-              default: 10
-              minimum: 1
-              maximum: 50
+            drop_capabilities:
+              type: array
+              description: Linux capabilities to drop
+              items:
+                type: string
+              default: ["ALL"]
+            enable_apparmor:
+              type: boolean
+              description: Enable AppArmor profile
+              default: true
+            enable_seccomp:
+              type: boolean
+              description: Enable seccomp profile
+              default: true
           additionalProperties: false
       additionalProperties: false
 

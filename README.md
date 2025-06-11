@@ -7,6 +7,14 @@ This plugin integrates with multiple AI providers (OpenAI GPT-4.1, Claude Opus 4
 [![Build Status](https://badge.buildkite.com/your-pipeline-badge.svg)](https://buildkite.com/your-org/your-pipeline)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+### Supported Providers (2025 Models)
+
+| Provider | Models | API Key Env | Notes |
+|----------|--------|-------------|-------|
+| **OpenAI** | `gpt-4.1`, `o4-mini`, `gpt-4o-mini` (legacy) | `OPENAI_API_KEY` | Latest reasoning models, 1M context |
+| **Claude** | `claude-opus-4`, `claude-sonnet-4` | `ANTHROPIC_API_KEY` | Extended thinking, excellent reasoning |
+| **Gemini** | `gemini-2.5-pro`, `gemini-2.5-flash` | `GOOGLE_API_KEY` | Deep Think mode, multimodal support |
+
 ## 🚨 Security Notice
 
 **CRITICAL**: Never store API keys in Buildkite pipeline configuration. Use external secret management services like AWS Secrets Manager, HashiCorp Vault, or Google Secret Manager. API keys in pipeline settings are exposed via the API and logs.

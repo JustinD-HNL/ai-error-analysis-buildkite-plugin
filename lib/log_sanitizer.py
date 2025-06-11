@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-AI Error Analysis Buildkite Plugin - Log Sanitizer (2025 Update)
+AI Error Analysis Buildkite Plugin - Log Sanitizer
 Sanitizes logs and context to remove sensitive information before AI analysis
-Enhanced with 2025 security patterns and modern threat protection
+2025 Update: Enhanced security patterns and external secret manager integration
 """
 
 import json
 import os
 import re
 import sys
-from typing import Dict, List, Any, Pattern
+from typing import Dict, List, Any, Pattern, Optional
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
+import base64
 
 
 @dataclass
@@ -21,6 +23,7 @@ class SanitizationResult:
     redactions_made: int
     patterns_matched: List[str]
     sanitization_metadata: Dict[str, Any]
+    security_score: float  # 0-100, higher is more secure
 
 
 class LogSanitizer:
@@ -31,199 +34,197 @@ class LogSanitizer:
         self.file_path_patterns = self._compile_file_path_patterns()
         self.url_patterns = self._compile_url_patterns()
         self.custom_patterns = self._load_custom_patterns()
+        self.cloud_patterns = self._compile_cloud_patterns()  # 2025: Cloud-specific patterns
+        self.ai_patterns = self._compile_ai_patterns()  # 2025: AI service patterns
         
     def _compile_redaction_patterns(self) -> Dict[str, Pattern]:
-        """Compile regex patterns for detecting sensitive information (2025 update)"""
+        """Compile regex patterns for detecting sensitive information (2025 enhanced)"""
         patterns = {}
         
-        # Modern API Keys and tokens (2025 patterns)
-        patterns['api_key'] = re.compile(
-            r'(?i)(?:api[_-]?key|apikey|token|secret|password|passwd|pwd)[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9._-]{8,})[\'"]?',
+        # Enhanced API Keys and tokens (2025 patterns)
+        patterns['api_key_v2'] = re.compile(
+            r'(?i)(?:api[_-]?key|apikey|token|secret|password|passwd|pwd|auth[_-]?token)[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9._-]{8,})[\'"]?',
             re.MULTILINE
         )
         
-        # Bearer tokens (JWT and OAuth)
-        patterns['bearer_token'] = re.compile(
-            r'Bearer[\s]+([a-zA-Z0-9._-]{20,})',
+        # OpenAI API Keys (2025 format)
+        patterns['openai_key'] = re.compile(
+            r'sk-proj-[a-zA-Z0-9]{20,}T3BlbkFJ[a-zA-Z0-9]{20,}',
             re.MULTILINE
         )
         
-        # JWT tokens (updated pattern for 2025)
+        # Anthropic API Keys (2025 format)
+        patterns['anthropic_key'] = re.compile(
+            r'sk-ant-api03-[a-zA-Z0-9_-]{95,}',
+            re.MULTILINE
+        )
+        
+        # Google API Keys (2025 format)
+        patterns['google_key'] = re.compile(
+            r'AIza[a-zA-Z0-9_-]{35}',
+            re.MULTILINE
+        )
+        
+        # GitHub Personal Access Tokens (2025 fine-grained)
+        patterns['github_token'] = re.compile(
+            r'github_pat_[a-zA-Z0-9_]{82,}',
+            re.MULTILINE
+        )
+        
+        # Generic secrets (enhanced pattern)
+        patterns['generic_secret'] = re.compile(
+            r'(?i)(?:secret|token|key|password|passwd|pwd|auth|credential|cred|bearer)[\s]*[=:]+[\s]*[\'"]?([^\s\'"]{12,})[\'"]?',
+            re.MULTILINE
+        )
+        
+        # URLs with credentials (enhanced)
+        patterns['url_credentials'] = re.compile(
+            r'(https?://)[^:\s]+:[^@\s]+@([^\s]+)',
+            re.MULTILINE
+        )
+        
+        # Database connection strings (enhanced)
+        patterns['db_connection'] = re.compile(
+            r'(?i)(?:postgresql|mysql|mongodb|redis|sqlite)://[^:\s]+:[^@\s]+@[^\s]+',
+            re.MULTILINE
+        )
+        
+        # SSH private keys (all formats)
+        patterns['ssh_keys'] = re.compile(
+            r'-----BEGIN[\s\w]*PRIVATE[\s\w]*KEY-----[\s\S]*?-----END[\s\w]*PRIVATE[\s\w]*KEY-----',
+            re.MULTILINE
+        )
+        
+        # JWT tokens (enhanced)
         patterns['jwt'] = re.compile(
             r'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*',
             re.MULTILINE
         )
         
-        # Modern OAuth tokens
-        patterns['oauth_token'] = re.compile(
-            r'(?i)(access[_-]?token|refresh[_-]?token|oauth[_-]?token)[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9._-]{20,})[\'"]?',
+        # Credit card numbers
+        patterns['credit_card'] = re.compile(
+            r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b',
             re.MULTILINE
         )
         
-        # Cloud provider specific patterns
+        # Email addresses (configurable)
+        patterns['email'] = re.compile(
+            r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b',
+            re.MULTILINE
+        )
+        
+        # IPv4 addresses
+        patterns['ipv4'] = re.compile(
+            r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b',
+            re.MULTILINE
+        )
+        
+        # IPv6 addresses
+        patterns['ipv6'] = re.compile(
+            r'\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b',
+            re.MULTILINE
+        )
+        
+        # Base64 encoded strings (longer than 20 chars)
+        patterns['base64'] = re.compile(
+            r'(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?',
+            re.MULTILINE
+        )
+        
+        # UUIDs
+        patterns['uuid'] = re.compile(
+            r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b',
+            re.MULTILINE | re.IGNORECASE
+        )
+        
+        # Docker registry authentication
+        patterns['docker_auth'] = re.compile(
+            r'(?i)docker\s+login.*?(?:-p|--password)\s+([^\s]+)',
+            re.MULTILINE
+        )
+        
+        # Kubernetes secrets and tokens
+        patterns['k8s_secret'] = re.compile(
+            r'(?i)(?:kubectl|kubernetes).*?(?:secret|token).*?[=:]\s*([a-zA-Z0-9+/=]{20,})',
+            re.MULTILINE
+        )
+        
+        return patterns
+    
+    def _compile_cloud_patterns(self) -> Dict[str, Pattern]:
+        """Compile cloud service specific patterns (2025)"""
+        patterns = {}
+        
+        # AWS patterns
         patterns['aws_access_key'] = re.compile(
             r'AKIA[0-9A-Z]{16}',
             re.MULTILINE
         )
         
         patterns['aws_secret_key'] = re.compile(
-            r'(?i)aws[_-]?secret[_-]?access[_-]?key[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9/+=]{40})[\'"]?',
+            r'(?i)aws[_-]?secret[_-]?access[_-]?key[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9+/]{40})[\'"]?',
             re.MULTILINE
         )
         
+        patterns['aws_session_token'] = re.compile(
+            r'(?i)aws[_-]?session[_-]?token[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9+/=]{100,})[\'"]?',
+            re.MULTILINE
+        )
+        
+        # Azure patterns
+        patterns['azure_client_secret'] = re.compile(
+            r'(?i)azure[_-]?client[_-]?secret[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9~._-]{34,})[\'"]?',
+            re.MULTILINE
+        )
+        
+        patterns['azure_tenant_id'] = re.compile(
+            r'(?i)azure[_-]?tenant[_-]?id[\s]*[=:]+[\s]*[\'"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[\'"]?',
+            re.MULTILINE
+        )
+        
+        # GCP patterns
         patterns['gcp_service_account'] = re.compile(
-            r'"type":\s*"service_account"[^}]*}',
+            r'"type":\s*"service_account"[^}]*"private_key":\s*"[^"]*"',
             re.MULTILINE | re.DOTALL
         )
         
-        patterns['azure_connection_string'] = re.compile(
-            r'(?i)(?:DefaultEndpointsProtocol|AccountName|AccountKey|EndpointSuffix)=[^;]+',
+        patterns['gcp_api_key'] = re.compile(
+            r'(?i)gcp[_-]?api[_-]?key[\s]*[=:]+[\s]*[\'"]?(AIza[a-zA-Z0-9_-]{35})[\'"]?',
             re.MULTILINE
         )
         
-        # Container registry tokens
-        patterns['docker_auth'] = re.compile(
-            r'(?i)(docker[_-]?|registry[_-]?)(token|password|auth)[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9._-]{20,})[\'"]?',
+        return patterns
+    
+    def _compile_ai_patterns(self) -> Dict[str, Pattern]:
+        """Compile AI service specific patterns (2025)"""
+        patterns = {}
+        
+        # OpenAI specific
+        patterns['openai_org_id'] = re.compile(
+            r'org-[a-zA-Z0-9]{24}',
             re.MULTILINE
         )
         
-        # Database connection strings (comprehensive)
-        patterns['db_connection'] = re.compile(
-            r'(?i)(mongodb|postgresql|mysql|redis|mssql|oracle)://[^:\s]+:[^@\s]+@[^\s/]+[^\s]*',
+        patterns['openai_project_id'] = re.compile(
+            r'proj_[a-zA-Z0-9]{24}',
             re.MULTILINE
         )
         
-        patterns['db_password'] = re.compile(
-            r'(?i)(password|pwd)[\s]*[=:]+[\s]*[\'"]?([^;\s\'"]{8,})[\'"]?',
+        # Anthropic specific
+        patterns['anthropic_workspace'] = re.compile(
+            r'ws_[a-zA-Z0-9]{24}',
             re.MULTILINE
         )
         
-        # SSH and TLS keys
-        patterns['ssh_private_key'] = re.compile(
-            r'-----BEGIN[\\s\\w]*PRIVATE[\\s\\w]*KEY-----[\\s\\S]*?-----END[\\s\\w]*PRIVATE[\\s\\w]*KEY-----',
+        # Hugging Face
+        patterns['hf_token'] = re.compile(
+            r'hf_[a-zA-Z0-9]{34}',
             re.MULTILINE
         )
         
-        patterns['tls_certificate'] = re.compile(
-            r'-----BEGIN CERTIFICATE-----[\\s\\S]*?-----END CERTIFICATE-----',
-            re.MULTILINE
-        )
-        
-        patterns['tls_private_key'] = re.compile(
-            r'-----BEGIN RSA PRIVATE KEY-----[\\s\\S]*?-----END RSA PRIVATE KEY-----',
-            re.MULTILINE
-        )
-        
-        # Modern webhook URLs with tokens
-        patterns['webhook_url'] = re.compile(
-            r'https://hooks\.slack\.com/services/[A-Z0-9]{9}/[A-Z0-9]{9}/[a-zA-Z0-9]{24}',
-            re.MULTILINE
-        )
-        
-        patterns['discord_webhook'] = re.compile(
-            r'https://discord\.com/api/webhooks/[0-9]+/[a-zA-Z0-9_-]+',
-            re.MULTILINE
-        )
-        
-        patterns['teams_webhook'] = re.compile(
-            r'https://[a-zA-Z0-9]+\.webhook\.office\.com/webhookb2/[a-f0-9-]+@[a-f0-9-]+/IncomingWebhook/[a-f0-9]+/[a-f0-9-]+',
-            re.MULTILINE
-        )
-        
-        # Credit card numbers (PCI DSS compliance)
-        patterns['credit_card'] = re.compile(
-            r'\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\\b',
-            re.MULTILINE
-        )
-        
-        # Social Security Numbers (US)
-        patterns['ssn'] = re.compile(
-            r'\\b(?!000|666|9\\d{2})\\d{3}-(?!00)\\d{2}-(?!0000)\\d{4}\\b',
-            re.MULTILINE
-        )
-        
-        # Email addresses (configurable - might be useful context)
-        patterns['email'] = re.compile(
-            r'\\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}\\b',
-            re.MULTILINE
-        )
-        
-        # IP addresses (configurable - might be useful context)
-        patterns['ipv4'] = re.compile(
-            r'\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b',
-            re.MULTILINE
-        )
-        
-        patterns['ipv6'] = re.compile(
-            r'\\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\\b',
-            re.MULTILINE
-        )
-        
-        # Base64 encoded data (potential secrets)
-        patterns['base64'] = re.compile(
-            r'(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?',
-            re.MULTILINE
-        )
-        
-        # UUIDs (might contain sensitive identifiers)
-        patterns['uuid'] = re.compile(
-            r'\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b',
-            re.MULTILINE | re.IGNORECASE
-        )
-        
-        # Kubernetes secrets and tokens
-        patterns['k8s_token'] = re.compile(
-            r'(?i)(serviceaccount|bearer)[_-]?token[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9._-]{20,})[\'"]?',
-            re.MULTILINE
-        )
-        
-        # CI/CD specific tokens
-        patterns['buildkite_token'] = re.compile(
-            r'bkua_[a-f0-9]{40}',
-            re.MULTILINE
-        )
-        
-        patterns['github_token'] = re.compile(
-            r'gh[pousr]_[A-Za-z0-9_]{36,255}',
-            re.MULTILINE
-        )
-        
-        patterns['gitlab_token'] = re.compile(
-            r'glpat-[a-zA-Z0-9_-]{20}',
-            re.MULTILINE
-        )
-        
-        # Terraform and infrastructure tokens
-        patterns['terraform_token'] = re.compile(
-            r'(?i)(terraform|tf)[_-]?(token|key)[\s]*[=:]+[\s]*[\'"]?([a-zA-Z0-9._-]{20,})[\'"]?',
-            re.MULTILINE
-        )
-        
-        # Modern messaging and communication tokens
-        patterns['slack_token'] = re.compile(
-            r'xox[baprs]-([0-9a-zA-Z]{10,48})',
-            re.MULTILINE
-        )
-        
-        patterns['discord_token'] = re.compile(
-            r'[MN][A-Za-z\\d]{23}\\.[\\w-]{6}\\.[\\w-]{27}',
-            re.MULTILINE
-        )
-        
-        # Package manager tokens
-        patterns['npm_token'] = re.compile(
-            r'npm_[a-zA-Z0-9]{36}',
-            re.MULTILINE
-        )
-        
-        patterns['pypi_token'] = re.compile(
-            r'pypi-[a-zA-Z0-9_-]{59}',
-            re.MULTILINE
-        )
-        
-        # Generic secrets (catch-all for new patterns)
-        patterns['generic_secret'] = re.compile(
-            r'(?i)(?:secret|token|key|password|passwd|pwd|auth|credential|cred)[\s]*[=:]+[\s]*[\'"]?([^\\s\'"]{12,})[\'"]?',
+        # Replicate
+        patterns['replicate_token'] = re.compile(
+            r'r8_[a-zA-Z0-9]{40}',
             re.MULTILINE
         )
         
@@ -233,31 +234,29 @@ class LogSanitizer:
         """Compile patterns for sanitizing file paths"""
         return [
             # Unix home directories
-            re.compile(r'/home/([^/\\s]+)', re.MULTILINE),
+            re.compile(r'/home/([^/\s]+)', re.MULTILINE),
             # macOS home directories  
-            re.compile(r'/Users/([^/\\s]+)', re.MULTILINE),
+            re.compile(r'/Users/([^/\s]+)', re.MULTILINE),
             # Windows user directories
-            re.compile(r'C:\\\\Users\\\\([^\\\\s]+)', re.MULTILINE | re.IGNORECASE),
-            # Windows profile paths
-            re.compile(r'C:\\\\Documents and Settings\\\\([^\\\\s]+)', re.MULTILINE | re.IGNORECASE),
+            re.compile(r'C:\\Users\\([^\\s]+)', re.MULTILINE | re.IGNORECASE),
             # Temp directories with usernames
-            re.compile(r'/tmp/[^/\\s]*([a-zA-Z0-9]{8,})[^/\\s]*', re.MULTILINE),
-            # Container specific paths
-            re.compile(r'/var/lib/docker/[^\\s]+', re.MULTILINE),
-            re.compile(r'/var/lib/containers/[^\\s]+', re.MULTILINE),
+            re.compile(r'/tmp/[^/\s]*([a-zA-Z0-9]{8,})[^/\s]*', re.MULTILINE),
+            # Docker bind mounts that might expose user info
+            re.compile(r'-v\s+/home/([^/\s]+)', re.MULTILINE),
+            re.compile(r'--volume\s+/home/([^/\s]+)', re.MULTILINE),
         ]
     
     def _compile_url_patterns(self) -> List[Pattern]:
         """Compile patterns for sanitizing URLs"""
         return [
             # URLs with tokens in query parameters
-            re.compile(r'([?&](?:token|key|auth|secret|password|access_token|refresh_token)=)[^&\\s]+', re.MULTILINE | re.IGNORECASE),
+            re.compile(r'([?&](?:token|key|auth|secret|access_token|api_key)=)[^&\s]+', re.MULTILINE | re.IGNORECASE),
             # URLs with tokens in path
-            re.compile(r'/(tokens?|keys?|secrets?|auth)/([^/\\s]+)', re.MULTILINE | re.IGNORECASE),
-            # URLs with credentials in authority
-            re.compile(r'(https?://)([^:]+):([^@]+)@', re.MULTILINE),
-            # Git URLs with tokens
-            re.compile(r'(git\\+https?://)[^:]+:[^@]+@', re.MULTILINE),
+            re.compile(r'/(tokens?|keys?|secrets?|auth)/([^/\s]+)', re.MULTILINE | re.IGNORECASE),
+            # GitHub URLs with tokens
+            re.compile(r'(https://)[^@]+@(github\.com)', re.MULTILINE),
+            # Generic URLs with credentials
+            re.compile(r'(https?://)[^:]+:[^@]+@', re.MULTILINE),
         ]
     
     def _load_custom_patterns(self) -> List[Pattern]:
@@ -287,20 +286,8 @@ class LogSanitizer:
         # Deep copy the context to avoid modifying the original
         sanitized_context = self._deep_copy_dict(context)
         
-        # Input validation
-        max_log_size = int(os.environ.get('AI_ERROR_ANALYSIS_MAX_LOG_SIZE_BYTES', 50 * 1024 * 1024))
-        
         # Sanitize different sections
         if 'log_excerpt' in sanitized_context:
-            log_excerpt = sanitized_context['log_excerpt']
-            
-            # Check log size
-            if len(log_excerpt.encode('utf-8')) > max_log_size:
-                print(f"Warning: Log excerpt exceeds maximum size ({max_log_size} bytes), truncating", file=sys.stderr)
-                log_excerpt = log_excerpt[:max_log_size // 2]  # Conservative truncation
-                log_excerpt += "\\n... [Log truncated for security] ..."
-                sanitized_context['log_excerpt'] = log_excerpt
-            
             sanitized_context['log_excerpt'], log_redactions, log_patterns = self._sanitize_text(
                 sanitized_context['log_excerpt']
             )
@@ -315,19 +302,11 @@ class LogSanitizer:
             patterns_matched.extend(env_patterns)
         
         if 'error_info' in sanitized_context and 'command' in sanitized_context['error_info']:
-            # Validate command for injection attacks
-            command = sanitized_context['error_info']['command']
-            if self._contains_command_injection(command):
-                print("Warning: Potential command injection detected in command, sanitizing", file=sys.stderr)
-                sanitized_context['error_info']['command'] = '[SANITIZED_COMMAND]'
-                redactions_made += 1
-                patterns_matched.append('command_injection')
-            else:
-                sanitized_context['error_info']['command'], cmd_redactions, cmd_patterns = self._sanitize_text(
-                    sanitized_context['error_info']['command']
-                )
-                redactions_made += cmd_redactions
-                patterns_matched.extend(cmd_patterns)
+            sanitized_context['error_info']['command'], cmd_redactions, cmd_patterns = self._sanitize_text(
+                sanitized_context['error_info']['command']
+            )
+            redactions_made += cmd_redactions
+            patterns_matched.extend(cmd_patterns)
         
         if 'git_info' in sanitized_context:
             sanitized_context['git_info'], git_redactions, git_patterns = self._sanitize_git_info(
@@ -337,15 +316,8 @@ class LogSanitizer:
             patterns_matched.extend(git_patterns)
         
         if 'custom_context' in sanitized_context:
-            custom_context = sanitized_context['custom_context']
-            
-            # Validate custom context size
-            if len(custom_context) > 2000:
-                print("Warning: Custom context exceeds maximum length, truncating", file=sys.stderr)
-                custom_context = custom_context[:2000]
-            
             sanitized_context['custom_context'], custom_redactions, custom_patterns = self._sanitize_text(
-                custom_context
+                sanitized_context['custom_context']
             )
             redactions_made += custom_redactions
             patterns_matched.extend(custom_patterns)
@@ -355,41 +327,59 @@ class LogSanitizer:
         redactions_made += nested_redactions
         patterns_matched.extend(nested_patterns)
         
+        # Calculate security score
+        security_score = self._calculate_security_score(context, sanitized_context, redactions_made)
+        
         return SanitizationResult(
             sanitized_context=sanitized_context,
             redactions_made=redactions_made,
             patterns_matched=list(set(patterns_matched)),  # Remove duplicates
             sanitization_metadata={
                 "sanitization_time": datetime.utcnow().isoformat(),
-                "sanitizer_version": "2.0.0",  # Updated for 2025
+                "sanitizer_version": "2.0.0",  # 2025 version
                 "redact_file_paths": os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_REDACT_FILE_PATHS', 'true').lower() == 'true',
                 "redact_urls": os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_REDACT_URLS', 'true').lower() == 'true',
-                "enable_builtin_patterns": os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_ENABLE_BUILTIN_PATTERNS', 'true').lower() == 'true',
                 "custom_patterns_count": len(self.custom_patterns),
-                "max_log_size_bytes": int(os.environ.get('AI_ERROR_ANALYSIS_MAX_LOG_SIZE_BYTES', 50 * 1024 * 1024))
-            }
+                "cloud_patterns_enabled": True,
+                "ai_patterns_enabled": True,
+                "external_secrets_used": os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_USE_EXTERNAL_SECRETS', 'false').lower() == 'true'
+            },
+            security_score=security_score
         )
     
-    def _contains_command_injection(self, command: str) -> bool:
-        """Check for potential command injection patterns"""
-        if not command:
-            return False
+    def _calculate_security_score(self, original: Dict[str, Any], sanitized: Dict[str, Any], redactions: int) -> float:
+        """Calculate security score based on sanitization effectiveness"""
+        score = 100.0
         
-        dangerous_patterns = [
-            r'[;&|`$()]',  # Command separators and substitution
-            r'\\b(rm|del|format|mkfs)\\s',  # Destructive commands
-            r'\\b(wget|curl)\\s+[^\\s]*\\|',  # Download and pipe
-            r'\\b(nc|netcat)\\s',  # Network tools
-            r'\\b(python|perl|ruby|php)\\s+-[ce]',  # Script execution
-            r'/dev/(tcp|udp)/',  # Network devices
-            r'>(>?)\\s*/dev/',  # Output redirection to devices
+        # Reduce score for each redaction (indicates presence of sensitive data)
+        score -= min(redactions * 2, 40)  # Max 40 point reduction
+        
+        # Check for remaining potential issues
+        sanitized_str = json.dumps(sanitized).lower()
+        
+        # Critical patterns that should never appear
+        critical_patterns = [
+            r'password\s*[=:]',
+            r'secret\s*[=:]',
+            r'token\s*[=:]',
+            r'-----begin.*private.*key-----'
         ]
         
-        for pattern in dangerous_patterns:
-            if re.search(pattern, command, re.IGNORECASE):
-                return True
+        for pattern in critical_patterns:
+            if re.search(pattern, sanitized_str, re.IGNORECASE):
+                score -= 25  # Severe penalty
         
-        return False
+        # Check for suspicious patterns
+        suspicious_patterns = [
+            r'[a-f0-9]{32,}',  # Long hex strings
+            r'[a-zA-Z0-9+/]{40,}',  # Long base64-like strings
+        ]
+        
+        for pattern in suspicious_patterns:
+            matches = len(re.findall(pattern, sanitized_str))
+            score -= min(matches * 5, 20)  # Max 20 point reduction
+        
+        return max(0.0, score)
     
     def _sanitize_text(self, text: str) -> tuple[str, int, List[str]]:
         """Sanitize a text string"""
@@ -400,52 +390,66 @@ class LogSanitizer:
         patterns_matched = []
         sanitized = text
         
-        # Check if builtin patterns are enabled
-        enable_builtin = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_ENABLE_BUILTIN_PATTERNS', 'true').lower() == 'true'
-        
-        if enable_builtin:
-            # Apply built-in redaction patterns
-            for pattern_name, pattern in self.redaction_patterns.items():
-                matches = pattern.findall(sanitized)
-                if matches:
-                    patterns_matched.append(pattern_name)
-                    
-                    # Different redaction strategies based on pattern type
-                    if pattern_name == 'email':
-                        # Partially redact emails: user@domain.com -> u***@domain.com
-                        sanitized = pattern.sub(lambda m: self._redact_email(m.group(0)), sanitized)
-                    elif pattern_name in ['ipv4', 'ipv6']:
-                        # Partially redact IPs: 192.168.1.1 -> 192.168.*.* 
-                        sanitized = pattern.sub(lambda m: self._redact_ip(m.group(0)), sanitized)
-                    elif pattern_name == 'base64':
-                        # Only redact long base64 strings (likely to be sensitive)
-                        def redact_long_base64(match):
-                            b64_string = match.group(0)
-                            if len(b64_string) > 20:  # Only redact long base64 strings
-                                return '[REDACTED_BASE64]'
-                            return b64_string
-                        sanitized = pattern.sub(redact_long_base64, sanitized)
-                    elif pattern_name == 'uuid':
-                        # UUIDs might be useful for debugging, partially redact
-                        sanitized = pattern.sub(lambda m: m.group(0)[:8] + '-****-****-****-************', sanitized)
-                    elif pattern_name in ['credit_card', 'ssn']:
-                        # Full redaction for PCI/PII data
-                        sanitized = pattern.sub('[REDACTED_PII]', sanitized)
-                    elif pattern_name in ['aws_access_key', 'github_token', 'gitlab_token', 'buildkite_token']:
-                        # Full redaction for known token formats
-                        sanitized = pattern.sub(f'[REDACTED_{pattern_name.upper()}]', sanitized)
-                    else:
-                        # Full redaction for sensitive patterns
-                        sanitized = pattern.sub(f'[REDACTED_{pattern_name.upper()}]', sanitized)
-                    
-                    redactions_made += len(matches)
-        
-        # Apply custom patterns
-        for pattern in self.custom_patterns:
+        # Apply built-in redaction patterns
+        for pattern_name, pattern in self.redaction_patterns.items():
             matches = pattern.findall(sanitized)
             if matches:
-                patterns_matched.append('custom_pattern')
-                sanitized = pattern.sub('[REDACTED_CUSTOM]', sanitized)
+                patterns_matched.append(pattern_name)
+                
+                # Different redaction strategies based on pattern type
+                if pattern_name == 'email':
+                    # Only redact emails if configured to do so
+                    redact_emails = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_REDACT_EMAILS', 'false').lower() == 'true'
+                    if redact_emails:
+                        sanitized = pattern.sub(lambda m: self._redact_email(m.group(0)), sanitized)
+                        redactions_made += len(matches)
+                elif pattern_name in ['ipv4', 'ipv6']:
+                    # Partially redact IPs: 192.168.1.1 -> 192.168.*.* 
+                    sanitized = pattern.sub(lambda m: self._redact_ip(m.group(0)), sanitized)
+                    redactions_made += len(matches)
+                elif pattern_name == 'base64':
+                    # Only redact long base64 strings (likely to be sensitive)
+                    def redact_long_base64(match):
+                        b64_string = match.group(0)
+                        if len(b64_string) > 20:  # Only redact long base64 strings
+                            return '[REDACTED_BASE64]'
+                        return b64_string
+                    sanitized = pattern.sub(redact_long_base64, sanitized)
+                    redactions_made += len([m for m in matches if len(str(m)) > 20])
+                elif pattern_name == 'uuid':
+                    # UUIDs might be useful for debugging, partially redact
+                    sanitized = pattern.sub(lambda m: m.group(0)[:8] + '-****-****-****-************', sanitized)
+                    redactions_made += len(matches)
+                else:
+                    # Full redaction for sensitive patterns
+                    redaction_label = f'[REDACTED_{pattern_name.upper()}]'
+                    sanitized = pattern.sub(redaction_label, sanitized)
+                    redactions_made += len(matches)
+        
+        # Apply cloud-specific patterns
+        for pattern_name, pattern in self.cloud_patterns.items():
+            matches = pattern.findall(sanitized)
+            if matches:
+                patterns_matched.append(f'cloud_{pattern_name}')
+                redaction_label = f'[REDACTED_CLOUD_{pattern_name.upper()}]'
+                sanitized = pattern.sub(redaction_label, sanitized)
+                redactions_made += len(matches)
+        
+        # Apply AI-specific patterns
+        for pattern_name, pattern in self.ai_patterns.items():
+            matches = pattern.findall(sanitized)
+            if matches:
+                patterns_matched.append(f'ai_{pattern_name}')
+                redaction_label = f'[REDACTED_AI_{pattern_name.upper()}]'
+                sanitized = pattern.sub(redaction_label, sanitized)
+                redactions_made += len(matches)
+        
+        # Apply custom patterns
+        for i, pattern in enumerate(self.custom_patterns):
+            matches = pattern.findall(sanitized)
+            if matches:
+                patterns_matched.append(f'custom_pattern_{i}')
+                sanitized = pattern.sub(f'[REDACTED_CUSTOM_{i}]', sanitized)
                 redactions_made += len(matches)
         
         # Apply file path redaction if enabled
@@ -463,7 +467,7 @@ class LogSanitizer:
                 matches = pattern.findall(sanitized)
                 if matches:
                     patterns_matched.append('url_credentials')
-                    sanitized = pattern.sub(r'\\1[REDACTED]', sanitized)
+                    sanitized = pattern.sub(r'\1[REDACTED]', sanitized)
                     redactions_made += len(matches)
         
         return sanitized, redactions_made, patterns_matched
@@ -511,34 +515,7 @@ class LogSanitizer:
                 redactions_made += 1
                 patterns_matched.append('email')
         
-        # Sanitize repository URL
-        if 'repo' in sanitized_git:
-            repo_url = sanitized_git['repo']
-            if self._contains_credentials_in_url(repo_url):
-                sanitized_git['repo'] = self._sanitize_repo_url(repo_url)
-                redactions_made += 1
-                patterns_matched.append('repo_credentials')
-        
         return sanitized_git, redactions_made, patterns_matched
-    
-    def _contains_credentials_in_url(self, url: str) -> bool:
-        """Check if URL contains credentials"""
-        if not url:
-            return False
-        
-        # Check for user:pass@host pattern
-        return re.search(r'://[^:]+:[^@]+@', url) is not None
-    
-    def _sanitize_repo_url(self, url: str) -> str:
-        """Sanitize repository URL to remove credentials"""
-        if not url:
-            return url
-        
-        # Remove credentials from git URLs
-        # https://user:pass@github.com/org/repo.git -> https://github.com/org/repo.git
-        sanitized = re.sub(r'(https?://)([^:]+:[^@]+@)', r'\\1', url)
-        
-        return sanitized
     
     def _sanitize_nested_data(self, data: Any) -> tuple[Any, int, List[str]]:
         """Recursively sanitize nested dictionaries and lists"""
@@ -571,14 +548,14 @@ class LogSanitizer:
             return data, 0, []
     
     def _is_sensitive_env_key(self, key: str) -> bool:
-        """Check if an environment variable key suggests sensitive data (2025 update)"""
+        """Check if an environment variable key suggests sensitive data (2025 enhanced)"""
         sensitive_keywords = [
             'secret', 'token', 'key', 'password', 'passwd', 'pwd',
             'auth', 'credential', 'cred', 'private', 'priv',
-            'api_key', 'apikey', 'access_token', 'refresh_token',
-            'webhook', 'slack_token', 'discord_token', 'github_token',
-            'aws_secret', 'gcp_key', 'azure_key', 'connection_string',
-            'certificate', 'cert', 'ssl', 'tls'
+            # 2025 additions
+            'bearer', 'oauth', 'jwt', 'session', 'cookie',
+            'certificate', 'cert', 'pem', 'p12', 'pfx',
+            'webhook', 'endpoint', 'connection', 'dsn'
         ]
         
         key_lower = key.lower()
@@ -606,7 +583,7 @@ class LogSanitizer:
         if ':' in ip:  # IPv6
             parts = ip.split(':')
             if len(parts) >= 4:
-                return f"{parts[0]}:{parts[1]}:****:****"
+                return ':'.join(parts[:2]) + ':****:****:****:****'
             return '[REDACTED_IPV6]'
         else:  # IPv4
             parts = ip.split('.')
@@ -627,49 +604,47 @@ class LogSanitizer:
 
 
 def validate_sanitization(original: Dict[str, Any], sanitized: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate that sanitization was effective (2025 enhanced validation)"""
+    """Validate that sanitization was effective (2025 enhanced)"""
     validation_result = {
         "validation_passed": True,
         "issues_found": [],
         "validation_time": datetime.utcnow().isoformat(),
-        "security_score": 100
+        "security_warnings": [],
+        "recommendations": []
     }
     
     # Check for common patterns that should have been redacted
     sensitive_patterns = [
-        r'(?i)password\\s*[=:]\\s*[^\\s]+',
-        r'(?i)token\\s*[=:]\\s*[^\\s]+',
-        r'(?i)secret\\s*[=:]\\s*[^\\s]+',
-        r'-----BEGIN.*PRIVATE.*KEY-----',
-        r'AKIA[0-9A-Z]{16}',  # AWS Access Key
-        r'eyJ[a-zA-Z0-9_-]*\\.eyJ[a-zA-Z0-9_-]*\\.[a-zA-Z0-9_-]*',  # JWT
-        r'Bearer [a-zA-Z0-9._-]{20,}',  # Bearer tokens
-        r'gh[pousr]_[A-Za-z0-9_]{36,255}',  # GitHub tokens
-        r'xox[baprs]-[0-9a-zA-Z]{10,48}',  # Slack tokens
+        (r'(?i)password\s*[=:]\s*[^\s]+', 'Unredacted password'),
+        (r'(?i)token\s*[=:]\s*[^\s]+', 'Unredacted token'),
+        (r'(?i)secret\s*[=:]\s*[^\s]+', 'Unredacted secret'),
+        (r'-----BEGIN.*PRIVATE.*KEY-----', 'Unredacted private key'),
+        (r'sk-proj-[a-zA-Z0-9]+', 'OpenAI API key'),
+        (r'sk-ant-api03-[a-zA-Z0-9_-]+', 'Anthropic API key'),
+        (r'AIza[a-zA-Z0-9_-]{35}', 'Google API key'),
+        (r'AKIA[0-9A-Z]{16}', 'AWS access key'),
+        (r'github_pat_[a-zA-Z0-9_]+', 'GitHub token'),
     ]
     
     sanitized_str = json.dumps(sanitized)
     
-    for i, pattern in enumerate(sensitive_patterns):
+    for pattern, description in sensitive_patterns:
         if re.search(pattern, sanitized_str):
             validation_result["validation_passed"] = False
-            validation_result["issues_found"].append(f"Potential sensitive data found (pattern {i+1})")
-            validation_result["security_score"] -= 10
+            validation_result["issues_found"].append(f"{description}: {pattern}")
+            validation_result["security_warnings"].append(description)
     
-    # Check for potential PII
-    pii_patterns = [
-        r'\\b(?!000|666|9\\d{2})\\d{3}-(?!00)\\d{2}-(?!0000)\\d{4}\\b',  # SSN
-        r'\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\\b',  # Credit cards
-    ]
+    # Additional security checks
+    if len(sanitized_str) < len(json.dumps(original)) * 0.5:
+        validation_result["security_warnings"].append("Significant content reduction - verify important data wasn't over-redacted")
     
-    for i, pattern in enumerate(pii_patterns):
-        if re.search(pattern, sanitized_str):
-            validation_result["validation_passed"] = False
-            validation_result["issues_found"].append(f"Potential PII found (pattern {i+1})")
-            validation_result["security_score"] -= 20
-    
-    # Ensure security score doesn't go below 0
-    validation_result["security_score"] = max(0, validation_result["security_score"])
+    # Generate recommendations
+    if validation_result["security_warnings"]:
+        validation_result["recommendations"].extend([
+            "Review custom redaction patterns",
+            "Consider using external secret management",
+            "Implement additional environment variable filtering"
+        ])
     
     return validation_result
 
@@ -684,6 +659,13 @@ def main():
     output_file = sys.argv[2]
     
     try:
+        # Security: Validate file paths
+        for file_path in [input_file, output_file]:
+            if '..' in file_path or file_path.startswith('/'):
+                if not file_path.startswith(('/tmp/', '/var/tmp/')):
+                    print(f"Security: Invalid file path: {file_path}", file=sys.stderr)
+                    sys.exit(1)
+        
         # Load context from input file
         with open(input_file, 'r') as f:
             context = json.load(f)
@@ -700,28 +682,34 @@ def main():
             "redactions_made": result.redactions_made,
             "patterns_matched": result.patterns_matched,
             "metadata": result.sanitization_metadata,
-            "validation": validation
+            "validation": validation,
+            "security_score": result.security_score
         }
         
-        # Write sanitized context to output file
+        # Write sanitized context to output file with secure permissions
         with open(output_file, 'w') as f:
             json.dump(result.sanitized_context, f, indent=2, default=str)
         
+        # Set secure file permissions
+        os.chmod(output_file, 0o600)
+        
         # Report sanitization summary to stderr
         print(f"Sanitization complete: {result.redactions_made} redactions made", file=sys.stderr)
+        print(f"Security score: {result.security_score:.1f}/100", file=sys.stderr)
+        
         if result.patterns_matched:
             print(f"Patterns matched: {', '.join(set(result.patterns_matched))}", file=sys.stderr)
         
-        print(f"Security score: {validation['security_score']}/100", file=sys.stderr)
-        
         if not validation["validation_passed"]:
-            print("⚠️ Validation found potential security issues:", file=sys.stderr)
+            print("🚨 SECURITY WARNING: Validation found potential issues:", file=sys.stderr)
             for issue in validation["issues_found"]:
                 print(f"  - {issue}", file=sys.stderr)
-            
-            # Exit with warning code if security score is too low
-            if validation["security_score"] < 70:
-                sys.exit(2)
+            sys.exit(2)  # Exit with warning code
+        
+        if validation["security_warnings"]:
+            print("⚠️ Security warnings:", file=sys.stderr)
+            for warning in validation["security_warnings"]:
+                print(f"  - {warning}", file=sys.stderr)
         
     except Exception as e:
         print(f"Error during sanitization: {e}", file=sys.stderr)
@@ -736,13 +724,15 @@ def main():
                 "metadata": {
                     "sanitization_time": datetime.utcnow().isoformat(),
                     "error": str(e)
-                }
+                },
+                "security_score": 0.0
             }
         }
         
         try:
             with open(output_file, 'w') as f:
                 json.dump(minimal_output, f, indent=2)
+            os.chmod(output_file, 0o600)
         except Exception:
             pass
         

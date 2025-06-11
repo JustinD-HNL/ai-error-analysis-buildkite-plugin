@@ -3,6 +3,11 @@ set -euo pipefail
 
 # AI Error Analysis Buildkite Plugin - Post-Command Hook
 # This hook runs after each command and analyzes errors using AI
+# 2025 Update: Enhanced security, performance, and AI provider support
+
+# Security: Enable additional protections
+set +H  # Disable history expansion to prevent injection
+umask 022  # Secure file permissions
 
 # Check if plugin was properly initialized
 if [[ "${AI_ERROR_ANALYSIS_INITIALIZED:-false}" != "true" ]]; then
@@ -26,11 +31,60 @@ echo "--- ${LOG_PREFIX} Analyzing command execution"
 COMMAND_EXIT_STATUS="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
 echo "Command exit status: ${COMMAND_EXIT_STATUS}"
 
-# Configuration
+# Configuration with security validation
 TRIGGER="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_TRIGGER:-auto}"
 ASYNC_EXECUTION="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_ASYNC_EXECUTION:-false}"
 DEBUG_MODE="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_DEBUG_MODE:-false}"
 DRY_RUN="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_DRY_RUN:-false}"
+
+# Security: Validate configuration values
+validate_config() {
+  local config_name="$1"
+  local config_value="$2"
+  local max_length="${3:-100}"
+  
+  if [[ ${#config_value} -gt $max_length ]]; then
+    echo "❌ Configuration value too long: ${config_name}" >&2
+    return 1
+  fi
+  
+  # Check for potential injection attempts
+  if [[ "$config_value" =~ [\;\|\&\$\`] ]]; then
+    echo "❌ Invalid characters in configuration: ${config_name}" >&2
+    return 1
+  fi
+  
+  return 0
+}
+
+# Validate critical configuration
+if ! validate_config "TRIGGER" "${TRIGGER}" 20; then
+  echo "❌ Invalid trigger configuration, exiting" >&2
+  exit 1
+fi
+
+# Container security: Check if running in secure container mode
+check_container_security() {
+  if [[ -n "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_CONTAINER_SECURITY_ENFORCE_NON_ROOT:-}" ]]; then
+    if [[ "$(id -u)" -eq 0 ]]; then
+      echo "❌ Security violation: Running as root user not allowed" >&2
+      return 1
+    fi
+  fi
+  
+  # Check for privileged mode (if in container)
+  if [[ -f "/proc/self/status" ]] && grep -q "NoNewPrivs:\s*0" /proc/self/status 2>/dev/null; then
+    echo "⚠️ Warning: Running without NoNewPrivs security feature" >&2
+  fi
+  
+  return 0
+}
+
+# Perform container security check
+if ! check_container_security; then
+  echo "❌ Container security check failed, exiting for safety" >&2
+  exit 1
+fi
 
 # Determine if analysis should be triggered
 should_analyze_error() {
@@ -57,18 +111,28 @@ should_analyze_error() {
       # Check if exit code is in the configured list
       local allowed_exit_codes="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_CONDITIONS_EXIT_STATUS:-[1,2,125,126,127,128,130]}"
       
+      # Security: Validate JSON before processing
+      if ! echo "${allowed_exit_codes}" | jq empty 2>/dev/null; then
+        echo "❌ Invalid JSON in exit status configuration" >&2
+        return 1
+      fi
+      
       python3 -c "
 import json
 import sys
 
-allowed_codes = json.loads('${allowed_exit_codes}')
-current_code = ${exit_status}
+try:
+    allowed_codes = json.loads('${allowed_exit_codes}')
+    current_code = ${exit_status}
 
-if current_code in allowed_codes:
-    print(f'Analysis triggered: exit code {current_code} is in allowed list')
-    sys.exit(0)
-else:
-    print(f'Analysis skipped: exit code {current_code} not in allowed list {allowed_codes}')
+    if current_code in allowed_codes:
+        print(f'Analysis triggered: exit code {current_code} is in allowed list')
+        sys.exit(0)
+    else:
+        print(f'Analysis skipped: exit code {current_code} not in allowed list {allowed_codes}')
+        sys.exit(1)
+except Exception as e:
+    print(f'Error processing exit codes: {e}', file=sys.stderr)
     sys.exit(1)
 "
       return $?
@@ -81,54 +145,136 @@ if ! should_analyze_error "${COMMAND_EXIT_STATUS}" "${TRIGGER}"; then
   exit 0
 fi
 
-# Create temporary directory for analysis
+# Create temporary directory for analysis with secure permissions
 TEMP_DIR=$(mktemp -d)
+chmod 700 "${TEMP_DIR}"  # Secure permissions
 export AI_ERROR_ANALYSIS_TEMP_DIR="${TEMP_DIR}"
 
-# Cleanup function
+# Enhanced cleanup function
 cleanup() {
   local exit_code=$?
+  
+  # Security: Securely remove temporary files
   if [[ -d "${TEMP_DIR}" ]]; then
+    # Overwrite sensitive files before removal
+    find "${TEMP_DIR}" -type f -name "*.json" -exec shred -vfz -n 3 {} \; 2>/dev/null || {
+      # Fallback if shred is not available
+      find "${TEMP_DIR}" -type f -name "*.json" -exec rm -f {} \;
+    }
     rm -rf "${TEMP_DIR}"
   fi
+  
+  # Clear sensitive environment variables
+  unset AI_ERROR_ANALYSIS_TEMP_DIR
+  
   exit $exit_code
 }
 trap cleanup EXIT
 
-# Main analysis function
+# Performance monitoring
+start_performance_monitor() {
+  if [[ "${DEBUG_MODE}" == "true" ]]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting performance monitoring" >&2
+    {
+      while true; do
+        if [[ -d "/proc/$$" ]]; then
+          echo "$(date '+%Y-%m-%d %H:%M:%S') - Memory: $(cat /proc/meminfo | grep MemAvailable | awk '{print $2 $3}' 2>/dev/null || echo 'N/A')" >&2
+          echo "$(date '+%Y-%m-%d %H:%M:%S') - Load: $(cat /proc/loadavg 2>/dev/null || echo 'N/A')" >&2
+        fi
+        sleep 10
+      done
+    } &
+    PERF_MONITOR_PID=$!
+  fi
+}
+
+stop_performance_monitor() {
+  if [[ -n "${PERF_MONITOR_PID:-}" ]]; then
+    kill "${PERF_MONITOR_PID}" 2>/dev/null || true
+    unset PERF_MONITOR_PID
+  fi
+}
+
+# Start performance monitoring if debug mode
+start_performance_monitor
+
+# Main analysis function with enhanced security and error handling
 analyze_error() {
   local start_time=$(date +%s)
   local timeout="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_TIMEOUT:-120}"
   
-  echo "--- ${LOG_PREFIX} Starting error analysis"
-  
-  # Step 1: Detect and categorize the error
-  echo "🔍 Detecting error patterns..."
-  if ! python3 "${PLUGIN_DIR}/lib/error_detector.py" > "${TEMP_DIR}/error_detection.json"; then
-    echo "❌ Error detection failed"
+  # Security: Validate timeout value
+  if [[ ! "$timeout" =~ ^[0-9]+$ ]] || [[ "$timeout" -gt 600 ]] || [[ "$timeout" -lt 30 ]]; then
+    echo "❌ Invalid timeout value: ${timeout}. Must be between 30-600 seconds." >&2
     return 1
   fi
   
-  local error_detected=$(jq -r '.error_detected' "${TEMP_DIR}/error_detection.json")
+  echo "--- ${LOG_PREFIX} Starting error analysis (timeout: ${timeout}s)"
+  
+  # Step 1: Detect and categorize the error with error handling
+  echo "🔍 Detecting error patterns..."
+  if ! timeout 30 python3 "${PLUGIN_DIR}/lib/error_detector.py" > "${TEMP_DIR}/error_detection.json"; then
+    local detect_exit=$?
+    if [[ $detect_exit -eq 124 ]]; then
+      echo "⏱️ Error detection timed out after 30 seconds" >&2
+    else
+      echo "❌ Error detection failed with exit code: $detect_exit" >&2
+    fi
+    return 1
+  fi
+  
+  # Validate error detection output
+  if ! jq empty "${TEMP_DIR}/error_detection.json" 2>/dev/null; then
+    echo "❌ Error detection produced invalid JSON output" >&2
+    return 1
+  fi
+  
+  local error_detected
+  error_detected=$(jq -r '.error_detected // false' "${TEMP_DIR}/error_detection.json")
   if [[ "${error_detected}" != "true" ]]; then
     echo "ℹ️ No specific error patterns detected, performing general analysis"
   fi
   
-  # Step 2: Build context for AI analysis
+  # Step 2: Build context for AI analysis with validation
   echo "📋 Building context..."
-  if ! python3 "${PLUGIN_DIR}/lib/context_builder.py" > "${TEMP_DIR}/context.json"; then
-    echo "❌ Context building failed"
+  if ! timeout 60 python3 "${PLUGIN_DIR}/lib/context_builder.py" > "${TEMP_DIR}/context.json"; then
+    local context_exit=$?
+    if [[ $context_exit -eq 124 ]]; then
+      echo "⏱️ Context building timed out after 60 seconds" >&2
+    else
+      echo "❌ Context building failed with exit code: $context_exit" >&2
+    fi
     return 1
   fi
   
-  # Step 3: Sanitize logs and context
-  echo "🧹 Sanitizing logs..."
-  if ! python3 "${PLUGIN_DIR}/lib/log_sanitizer.py" \
-    "${TEMP_DIR}/context.json" \
-    "${TEMP_DIR}/sanitized_context.json"; then
-    echo "❌ Log sanitization failed"
+  # Validate context output
+  if ! jq empty "${TEMP_DIR}/context.json" 2>/dev/null; then
+    echo "❌ Context building produced invalid JSON output" >&2
     return 1
   fi
+  
+  # Step 3: Sanitize logs and context with enhanced security
+  echo "🧹 Sanitizing logs..."
+  if ! timeout 30 python3 "${PLUGIN_DIR}/lib/log_sanitizer.py" \
+    "${TEMP_DIR}/context.json" \
+    "${TEMP_DIR}/sanitized_context.json"; then
+    local sanitize_exit=$?
+    if [[ $sanitize_exit -eq 124 ]]; then
+      echo "⏱️ Log sanitization timed out after 30 seconds" >&2
+    else
+      echo "❌ Log sanitization failed with exit code: $sanitize_exit" >&2
+    fi
+    return 1
+  fi
+  
+  # Validate sanitized output
+  if ! jq empty "${TEMP_DIR}/sanitized_context.json" 2>/dev/null; then
+    echo "❌ Log sanitization produced invalid JSON output" >&2
+    return 1
+  fi
+  
+  # Security: Check for potential data leaks in sanitized content
+  check_sanitization_security "${TEMP_DIR}/sanitized_context.json"
   
   # Step 4: Check cache for similar errors
   local cache_enabled="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_CACHE_ENABLED:-true}"
@@ -136,51 +282,61 @@ analyze_error() {
   
   if [[ "${cache_enabled}" == "true" ]] && [[ "${DRY_RUN}" != "true" ]]; then
     echo "💾 Checking cache..."
-    cached_result=$(python3 "${PLUGIN_DIR}/lib/cache_manager.py" check "${TEMP_DIR}/sanitized_context.json" || echo "")
-    
-    if [[ -n "${cached_result}" ]]; then
-      echo "✅ Found cached analysis result"
-      echo "${cached_result}" > "${TEMP_DIR}/analysis_result.json"
-      generate_report
-      return 0
+    if command -v python3 >/dev/null && [[ -f "${PLUGIN_DIR}/lib/cache_manager.py" ]]; then
+      cached_result=$(timeout 10 python3 "${PLUGIN_DIR}/lib/cache_manager.py" check "${TEMP_DIR}/sanitized_context.json" 2>/dev/null || echo "")
+      
+      if [[ -n "${cached_result}" ]] && jq empty <<< "${cached_result}" 2>/dev/null; then
+        echo "✅ Found cached analysis result"
+        echo "${cached_result}" > "${TEMP_DIR}/analysis_result.json"
+        generate_report
+        return 0
+      fi
     fi
   fi
   
-  # Step 5: Call AI provider for analysis
+  # Step 5: Call AI provider for analysis with enhanced timeout handling
   echo "🤖 Calling AI provider..."
   
   if [[ "${DRY_RUN}" == "true" ]]; then
     echo "🧪 Dry run mode - generating mock analysis"
-    cat > "${TEMP_DIR}/analysis_result.json" << 'EOF'
-{
-  "provider": "mock",
-  "model": "dry-run",
-  "analysis": {
-    "root_cause": "This is a mock analysis for dry run mode",
-    "suggested_fixes": [
-      "Check the dry run configuration",
-      "Verify the plugin is working correctly",
-      "Review the logs for actual errors"
-    ],
-    "confidence": 85,
-    "error_type": "configuration",
-    "severity": "medium"
-  },
-  "metadata": {
-    "analysis_time": "2s",
-    "tokens_used": 0,
-    "cached": false
-  }
-}
-EOF
+    generate_mock_analysis
   else
-    # Timeout wrapper for AI analysis
-    timeout "${timeout}" python3 "${PLUGIN_DIR}/lib/ai_providers.py" \
-      "${TEMP_DIR}/sanitized_context.json" \
-      > "${TEMP_DIR}/analysis_result.json" || {
+    # Enhanced timeout for reasoning models (o4, claude-opus-4, etc.)
+    local ai_timeout="${timeout}"
+    local ai_providers
+    ai_providers=$(echo "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_AI_PROVIDERS:-[{\"name\":\"openai\",\"model\":\"o4-mini\"}]}" | jq -r '.[0].model // "o4-mini"' 2>/dev/null || echo "o4-mini")
+    
+    # Increase timeout for reasoning models
+    if [[ "$ai_providers" =~ (o4|claude-opus|gemini.*pro) ]]; then
+      ai_timeout=$((timeout > 300 ? timeout : 300))
+      echo "🧠 Using extended timeout (${ai_timeout}s) for reasoning model: ${ai_providers}"
+    fi
+    
+    # Timeout wrapper for AI analysis with progress monitoring
+    {
+      timeout "${ai_timeout}" python3 "${PLUGIN_DIR}/lib/ai_providers.py" \
+        "${TEMP_DIR}/sanitized_context.json" \
+        > "${TEMP_DIR}/analysis_result.json" &
+      
+      local ai_pid=$!
+      local elapsed=0
+      local progress_interval=30
+      
+      # Monitor progress for long-running analysis
+      while kill -0 "$ai_pid" 2>/dev/null; do
+        sleep 10
+        elapsed=$((elapsed + 10))
+        
+        if [[ $((elapsed % progress_interval)) -eq 0 ]] && [[ $elapsed -lt $ai_timeout ]]; then
+          echo "⏳ AI analysis in progress... (${elapsed}s/${ai_timeout}s)"
+        fi
+      done
+      
+      wait "$ai_pid"
+    } || {
       local ai_exit_code=$?
       if [[ $ai_exit_code -eq 124 ]]; then
-        echo "⏱️ AI analysis timed out after ${timeout} seconds"
+        echo "⏱️ AI analysis timed out after ${ai_timeout} seconds"
       else
         echo "❌ AI analysis failed with exit code: $ai_exit_code"
       fi
@@ -188,11 +344,17 @@ EOF
     }
   fi
   
+  # Validate AI analysis output
+  if ! jq empty "${TEMP_DIR}/analysis_result.json" 2>/dev/null; then
+    echo "❌ AI analysis produced invalid JSON output" >&2
+    return 1
+  fi
+  
   # Step 6: Cache the result (if caching enabled and not dry run)
   if [[ "${cache_enabled}" == "true" ]] && [[ "${DRY_RUN}" != "true" ]]; then
-    python3 "${PLUGIN_DIR}/lib/cache_manager.py" store \
+    timeout 10 python3 "${PLUGIN_DIR}/lib/cache_manager.py" store \
       "${TEMP_DIR}/sanitized_context.json" \
-      "${TEMP_DIR}/analysis_result.json" || {
+      "${TEMP_DIR}/analysis_result.json" 2>/dev/null || {
       echo "⚠️ Failed to cache analysis result"
     }
   fi
@@ -203,17 +365,92 @@ EOF
   local end_time=$(date +%s)
   local duration=$((end_time - start_time))
   echo "✅ Analysis completed in ${duration} seconds"
+  
+  # Log performance metrics
+  if [[ "${DEBUG_MODE}" == "true" ]]; then
+    echo "📊 Performance metrics saved to /tmp/ai-error-analysis-metrics.log" >&2
+    echo "Analysis completed in ${duration}s" >> /tmp/ai-error-analysis-metrics.log
+    echo "Timestamp: $(date)" >> /tmp/ai-error-analysis-metrics.log
+  fi
 }
 
-# Report generation function
+# Security function to check sanitization
+check_sanitization_security() {
+  local sanitized_file="$1"
+  
+  # Check for common secrets that should have been redacted
+  local forbidden_patterns=(
+    "password="
+    "secret="
+    "token="
+    "key="
+    "-----BEGIN.*PRIVATE.*KEY-----"
+  )
+  
+  for pattern in "${forbidden_patterns[@]}"; do
+    if grep -qi "$pattern" "$sanitized_file" 2>/dev/null; then
+      echo "🚨 Security warning: Potential secret detected in sanitized output: $pattern" >&2
+      # Don't fail the build, but log the issue
+      echo "$(date): Security warning in sanitization" >> /tmp/ai-error-analysis-security.log
+      break
+    fi
+  done
+}
+
+# Generate mock analysis for dry run mode
+generate_mock_analysis() {
+  cat > "${TEMP_DIR}/analysis_result.json" << 'EOF'
+{
+  "provider": "mock",
+  "model": "dry-run",
+  "analysis": {
+    "root_cause": "This is a mock analysis for dry run mode. The actual analysis would examine the build failure and provide specific insights.",
+    "suggested_fixes": [
+      "Verify the dry run configuration is working correctly",
+      "Check that the plugin is properly installed and configured",
+      "Review the logs for actual errors when not in dry run mode",
+      "Ensure AI provider API keys are configured for real analysis"
+    ],
+    "confidence": 85,
+    "error_type": "configuration",
+    "severity": "medium"
+  },
+  "metadata": {
+    "analysis_time": "2s",
+    "tokens_used": 0,
+    "cached": false,
+    "dry_run": true
+  }
+}
+EOF
+}
+
+# Enhanced report generation function
 generate_report() {
   echo "📊 Generating report..."
   
-  if ! python3 "${PLUGIN_DIR}/lib/report_generator.py" \
+  # Validate inputs before report generation
+  for required_file in "analysis_result.json" "context.json"; do
+    if [[ ! -f "${TEMP_DIR}/${required_file}" ]]; then
+      echo "❌ Required file missing for report generation: ${required_file}" >&2
+      return 1
+    fi
+    
+    if ! jq empty "${TEMP_DIR}/${required_file}" 2>/dev/null; then
+      echo "❌ Invalid JSON in required file: ${required_file}" >&2
+      return 1
+    fi
+  done
+  
+  local include_confidence="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_INCLUDE_CONFIDENCE:-true}"
+  
+  if ! timeout 30 python3 "${PLUGIN_DIR}/lib/report_generator.py" \
     "${TEMP_DIR}/analysis_result.json" \
     "${TEMP_DIR}/context.json" \
-    > "${TEMP_DIR}/report.json"; then
-    echo "❌ Report generation failed"
+    html \
+    "${include_confidence}" \
+    > "${TEMP_DIR}/report.html"; then
+    echo "❌ Report generation failed" >&2
     return 1
   fi
   
@@ -224,61 +461,101 @@ generate_report() {
   local save_artifact="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_SAVE_AS_ARTIFACT:-false}"
   if [[ "${save_artifact}" == "true" ]]; then
     local artifact_path="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_ARTIFACT_PATH:-ai-analysis-report.json}"
+    
+    # Security: Validate artifact path
+    if [[ "$artifact_path" =~ \.\./|\.\.\\ ]]; then
+      echo "❌ Invalid artifact path (path traversal attempt): ${artifact_path}" >&2
+      return 1
+    fi
+    
+    # Ensure artifact directory exists
+    mkdir -p "$(dirname "${artifact_path}")"
     cp "${TEMP_DIR}/analysis_result.json" "${artifact_path}"
     echo "💾 Analysis saved as artifact: ${artifact_path}"
   fi
   
-  # Debug output
+  # Debug output with security considerations
   if [[ "${DEBUG_MODE}" == "true" ]]; then
     echo "--- ${LOG_PREFIX} Debug Information"
     echo "Error detection results:"
-    cat "${TEMP_DIR}/error_detection.json" | jq . || echo "Invalid JSON"
+    jq . "${TEMP_DIR}/error_detection.json" 2>/dev/null || echo "Invalid JSON"
     
     echo "Context summary:"
-    cat "${TEMP_DIR}/context.json" | jq '.summary // "No summary available"' || echo "N/A"
+    jq '.context_metadata // "No metadata available"' "${TEMP_DIR}/context.json" 2>/dev/null || echo "N/A"
     
-    echo "Analysis result:"
-    cat "${TEMP_DIR}/analysis_result.json" | jq . || echo "Invalid JSON"
+    echo "Analysis result summary:"
+    jq '{provider: .provider, model: .model, confidence: .analysis.confidence, severity: .analysis.severity}' "${TEMP_DIR}/analysis_result.json" 2>/dev/null || echo "Invalid JSON"
   fi
 }
 
-# Create Buildkite annotation with analysis results
+# Create Buildkite annotation with security validation
 create_buildkite_annotation() {
   local annotation_style="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_ANNOTATION_STYLE:-error}"
   local annotation_context="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_ANNOTATION_CONTEXT:-ai-error-analysis}"
-  local include_confidence="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_INCLUDE_CONFIDENCE:-true}"
   
-  # Generate HTML annotation
-  local html_report=$(python3 "${PLUGIN_DIR}/lib/report_generator.py" html \
-    "${TEMP_DIR}/analysis_result.json" \
-    "${TEMP_DIR}/context.json" \
-    "${include_confidence}")
+  # Security: Validate annotation parameters
+  if [[ ! "$annotation_style" =~ ^(error|warning|info|success)$ ]]; then
+    echo "⚠️ Invalid annotation style, using default 'error'" >&2
+    annotation_style="error"
+  fi
   
-  if [[ -n "${html_report}" ]]; then
-    # Create the annotation
-    echo "${html_report}" | buildkite-agent annotate \
-      --style "${annotation_style}" \
-      --context "${annotation_context}"
-    
-    echo "📝 Analysis annotation created with context: ${annotation_context}"
-  else
-    echo "❌ Failed to generate HTML report for annotation"
+  if [[ ! "$annotation_context" =~ ^[a-zA-Z0-9_-]+$ ]] || [[ ${#annotation_context} -gt 50 ]]; then
+    echo "⚠️ Invalid annotation context, using default" >&2
+    annotation_context="ai-error-analysis"
+  fi
+  
+  # Read and validate HTML report
+  if [[ ! -f "${TEMP_DIR}/report.html" ]]; then
+    echo "❌ HTML report file not found" >&2
     return 1
+  fi
+  
+  local html_report
+  html_report=$(cat "${TEMP_DIR}/report.html")
+  
+  if [[ -z "$html_report" ]]; then
+    echo "❌ Empty HTML report generated" >&2
+    return 1
+  fi
+  
+  # Create the annotation with error handling
+  if command -v buildkite-agent >/dev/null 2>&1; then
+    if echo "${html_report}" | buildkite-agent annotate \
+      --style "${annotation_style}" \
+      --context "${annotation_context}"; then
+      echo "📝 Analysis annotation created with context: ${annotation_context}"
+    else
+      echo "❌ Failed to create Buildkite annotation" >&2
+      return 1
+    fi
+  else
+    echo "⚠️ buildkite-agent command not available, skipping annotation" >&2
+    # Save annotation content for manual review
+    echo "${html_report}" > "${TEMP_DIR}/annotation.html"
+    echo "💾 Annotation content saved to ${TEMP_DIR}/annotation.html"
   fi
 }
 
-# Main execution
+# Enhanced main execution with comprehensive error handling
 main() {
   local max_retries="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_MAX_RETRIES:-3}"
   local retry_count=0
   
+  # Security: Validate max_retries
+  if [[ ! "$max_retries" =~ ^[0-9]+$ ]] || [[ "$max_retries" -gt 10 ]]; then
+    echo "⚠️ Invalid max_retries value, using default (3)" >&2
+    max_retries=3
+  fi
+  
   while [[ $retry_count -lt $max_retries ]]; do
     if [[ $retry_count -gt 0 ]]; then
-      echo "🔄 Retry attempt ${retry_count}/${max_retries}"
-      sleep $((retry_count * 2))  # Exponential backoff
+      local backoff_time=$((retry_count * 2))
+      echo "🔄 Retry attempt ${retry_count}/${max_retries} (waiting ${backoff_time}s)"
+      sleep "$backoff_time"
     fi
     
     if analyze_error; then
+      stop_performance_monitor
       return 0
     else
       ((retry_count++))
@@ -289,13 +566,39 @@ main() {
   echo "❌ Analysis failed after ${max_retries} attempts"
   
   # Create fallback annotation
-  buildkite-agent annotate \
-    --style "warning" \
-    --context "ai-error-analysis-fallback" \
-    "⚠️ **AI Error Analysis Failed**<br/>The automated error analysis could not be completed. Please review the logs manually."
+  create_fallback_annotation
+  
+  stop_performance_monitor
   
   # Don't fail the build due to analysis failure
   return 0
+}
+
+# Create fallback annotation when analysis fails
+create_fallback_annotation() {
+  local annotation_context="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_ANNOTATION_CONTEXT:-ai-error-analysis}-fallback"
+  
+  local fallback_html="<div style='border-left: 4px solid #f39c12; padding: 12px; background: #fef8f1;'>
+    <h3 style='margin: 0; color: #e67e22;'>⚠️ AI Error Analysis Failed</h3>
+    <p style='margin: 8px 0 0 0; color: #8b4513;'>
+      The automated error analysis could not be completed. Please review the logs manually or contact your DevOps team.
+    </p>
+    <details style='margin-top: 8px;'>
+      <summary style='cursor: pointer; color: #e67e22;'>Troubleshooting Steps</summary>
+      <ul style='margin: 8px 0; padding-left: 20px;'>
+        <li>Check if AI provider API keys are configured correctly</li>
+        <li>Verify network connectivity to AI provider endpoints</li>
+        <li>Review plugin configuration for any issues</li>
+        <li>Check system resources (memory, disk space)</li>
+      </ul>
+    </details>
+  </div>"
+  
+  if command -v buildkite-agent >/dev/null 2>&1; then
+    echo "${fallback_html}" | buildkite-agent annotate \
+      --style "warning" \
+      --context "${annotation_context}" || true
+  fi
 }
 
 # Execute based on async configuration
@@ -305,7 +608,10 @@ if [[ "${ASYNC_EXECUTION}" == "true" ]]; then
     main
     echo "--- ${LOG_PREFIX} Background analysis completed"
   } &
-  echo "ℹ️ Analysis started in background, build will continue"
+  echo "ℹ️ Analysis started in background (PID: $!), build will continue"
+  
+  # Store background PID for cleanup in pre-exit hook
+  echo "$!" > "${TEMP_DIR}/background_pid" 2>/dev/null || true
 else
   main
 fi

@@ -1,0 +1,130 @@
+# Sample Log Files for Testing AI Error Analysis Plugin
+
+## Compilation Error Log
+Building project...
+src/main.cpp:42:15: error: expected ';' before 'return'
+   42 |     int x = 5
+      |               ^
+      |               ;
+   43 |     return x;
+      |     ~~~~~~
+src/utils.h:18:3: error: 'string' does not name a type
+   18 |   string name;
+      |   ^~~~~~
+src/utils.h:18:3: note: 'std::string' is defined in header '<string>'; did you forget to '#include <string>'?
+Build failed with 2 errors
+
+## Test Failure Log
+Running test suite...
+PASS tests/unit/auth.test.js
+FAIL tests/integration/login.test.js
+  ● Login Integration › should authenticate valid user
+    expect(received).toBe(expected) // Object.is equality
+    Expected: true
+    Received: false
+      at Object.<anonymous> (tests/integration/login.test.js:23:24)
+  ● Login Integration › should reject invalid credentials
+    TypeError: Cannot read property 'status' of undefined
+      at Object.<anonymous> (tests/integration/login.test.js:35:18)
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       2 failed, 8 passed, 10 total
+
+## Dependency Error Log
+Installing dependencies...
+npm ERR! code ERESOLVE
+npm ERR! ERESOLVE unable to resolve dependency tree
+npm ERR! 
+npm ERR! While resolving: my-app@1.0.0
+npm ERR! Found: react@16.14.0
+npm ERR! node_modules/react
+npm ERR!   react@"^16.14.0" from the root project
+npm ERR! 
+npm ERR! Could not resolve dependency:
+npm ERR! peer react@"^17.0.0" from react-dom@17.0.2
+npm ERR! node_modules/react-dom
+npm ERR!   react-dom@"^17.0.2" from the root project
+Module 'missing-package' not found. Did you mean to install it?
+
+## Network Error Log
+Downloading assets...
+curl: (7) Failed to connect to cdn.example.com port 443: Connection refused
+fatal: unable to access 'https://github.com/user/repo.git/': Could not resolve host: github.com
+ERROR: connection timeout after 30 seconds
+DNS resolution failed for registry.npmjs.org
+
+## Permission Error Log
+Setting up build environment...
+mkdir: cannot create directory '/var/log/app': Permission denied
+cp: cannot create regular file '/etc/config.conf': Operation not permitted
+ERROR: Access denied - insufficient privileges to write to system directories
+Please run with appropriate permissions or contact your system administrator
+
+## Memory Error Log
+Processing large dataset...
+malloc(): Cannot allocate memory
+Out of memory: cannot allocate 4294967296 bytes
+Segmentation fault (core dumped)
+Process terminated due to memory constraints
+Available memory: 128MB, Required: 4GB
+
+## Timeout Error Log
+Running deployment...
+Waiting for service to start...
+Service startup timeout after 300 seconds
+Connection timeout: failed to reach endpoint after 120s
+Build cancelled due to timeout (maximum: 30 minutes)
+Operation timed out waiting for response
+
+## Network Certificate Error Log
+Establishing secure connection...
+SSL certificate verification failed for api.example.com
+x509: certificate has expired or is not yet valid
+curl: (60) SSL certificate problem: unable to get local issuer certificate
+HTTPS connection failed: certificate verification error
+
+## Docker Error Log
+Building Docker image...
+ERROR: failed to solve: failed to resolve source metadata
+Step 3/10 : FROM node:16-alpine
+ERROR: Could not find image 'node:16-alpine' locally
+docker: Error response from daemon: pull access denied for private-repo
+Container startup failed: exit code 125
+
+## Linting Error Log
+Running code quality checks...
+ESLint found 5 errors and 12 warnings:
+  src/app.js:15:1  error  'console' is not defined  no-undef
+  src/app.js:23:5  error  Missing semicolon  semi
+  src/utils.js:8:3  warning  'variable' is defined but never used  no-unused-vars
+Code quality gate failed: 5 errors found (maximum allowed: 0)
+
+## Database Connection Error Log
+Starting application...
+Error: connect ECONNREFUSED 127.0.0.1:5432
+    at TCPConnectWrap.afterConnect [as oncomplete] (net.js:1148:16)
+PostgreSQL connection failed: FATAL: password authentication failed for user "app"
+Database migration failed: connection timeout
+Unable to establish database connection pool
+
+## Multiple Error Types Log
+Starting build process...
+[INFO] Compiling TypeScript files...
+src/types.ts:45:12 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'
+[ERROR] TypeScript compilation failed
+
+[INFO] Running unit tests...
+FAIL src/components/Button.test.tsx
+  ● Button component › should render correctly
+    ReferenceError: document is not defined
+      at Object.<anonymous> (src/components/Button.test.tsx:8:20)
+
+[INFO] Installing production dependencies...
+npm WARN deprecated package@1.0.0: This package is no longer maintained
+npm ERR! network request to https://registry.npmjs.org/package failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org
+
+[ERROR] Docker build failed
+Step 5/8 : COPY package*.json ./
+COPY failed: stat /var/lib/docker/tmp/package.json: no such file or directory
+
+Build process completed with 4 errors
+Total time: 5 minutes 32 seconds

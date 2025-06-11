@@ -1,0 +1,227 @@
+name: AI Error Analysis
+description: Automatically analyzes build failures using AI models to provide actionable insights and suggestions
+author: https://github.com/your-org/ai-error-analysis-buildkite-plugin
+requirements:
+  - python3
+  - curl
+
+configuration:
+  properties:
+    # AI Provider Configuration
+    ai_providers:
+      type: array
+      description: List of AI providers to use for error analysis
+      default:
+        - name: openai
+          model: gpt-4o-mini
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            enum: ["openai", "claude", "gemini"]
+            description: AI provider name
+          model:
+            type: string
+            description: Model name (e.g., gpt-4o-mini, claude-3-haiku-20240307, gemini-1.5-flash)
+          api_key_env:
+            type: string
+            description: Environment variable containing the API key
+            default: "{PROVIDER}_API_KEY"
+          endpoint:
+            type: string
+            description: Custom API endpoint (optional)
+          max_tokens:
+            type: integer
+            description: Maximum tokens for response
+            default: 1000
+          timeout:
+            type: integer
+            description: Request timeout in seconds
+            default: 60
+        required: ["name"]
+        additionalProperties: false
+
+    # Error Detection Configuration  
+    trigger:
+      type: string
+      enum: ["auto", "explicit", "always"]
+      description: When to trigger error analysis
+      default: "auto"
+
+    conditions:
+      type: object
+      description: Conditions for triggering analysis
+      properties:
+        exit_status:
+          type: array
+          description: Exit codes that trigger analysis
+          items:
+            type: integer
+          default: [1, 2, 125, 126, 127, 128, 130]
+        branches:
+          type: array
+          description: Git branches to analyze (empty = all branches)
+          items:
+            type: string
+          default: []
+        patterns:
+          type: array
+          description: Log patterns that trigger analysis
+          items:
+            type: string
+          default: ["ERROR", "FAILED", "Exception", "fatal:", "panic:"]
+      additionalProperties: false
+
+    # Context and Analysis Configuration
+    context:
+      type: object
+      description: Context gathering configuration
+      properties:
+        log_lines:
+          type: integer
+          description: Number of log lines to analyze
+          default: 500
+        include_environment:
+          type: boolean
+          description: Include safe environment variables in context
+          default: true
+        include_pipeline_info:
+          type: boolean
+          description: Include pipeline and build metadata
+          default: true
+        include_git_info:
+          type: boolean
+          description: Include git commit and branch information
+          default: true
+        custom_context:
+          type: string
+          description: Custom context to include in analysis
+          default: ""
+      additionalProperties: false
+
+    # Security and Privacy
+    redaction:
+      type: object
+      description: Log redaction configuration
+      properties:
+        custom_patterns:
+          type: array
+          description: Custom regex patterns to redact
+          items:
+            type: string
+          default: []
+        redact_file_paths:
+          type: boolean
+          description: Redact file paths that might contain user info
+          default: true
+        redact_urls:
+          type: boolean
+          description: Redact URLs that might contain sensitive data
+          default: true
+      additionalProperties: false
+
+    # Output Configuration
+    output:
+      type: object
+      description: Output configuration
+      properties:
+        annotation_style:
+          type: string
+          enum: ["error", "warning", "info", "success"]
+          description: Buildkite annotation style
+          default: "error"
+        annotation_context:
+          type: string
+          description: Unique context for the annotation
+          default: "ai-error-analysis"
+        include_confidence:
+          type: boolean
+          description: Include confidence score in output
+          default: true
+        save_as_artifact:
+          type: boolean
+          description: Save detailed analysis as build artifact
+          default: false
+        artifact_path:
+          type: string
+          description: Path for analysis artifact
+          default: "ai-analysis-report.json"
+      additionalProperties: false
+
+    # Performance and Reliability
+    performance:
+      type: object
+      description: Performance configuration
+      properties:
+        timeout:
+          type: integer
+          description: Total analysis timeout in seconds
+          default: 120
+        async_execution:
+          type: boolean
+          description: Run analysis asynchronously (don't block build)
+          default: false
+        cache_enabled:
+          type: boolean
+          description: Enable caching of similar error patterns
+          default: true
+        cache_ttl:
+          type: integer
+          description: Cache time-to-live in seconds
+          default: 3600
+        fallback_strategy:
+          type: string
+          enum: ["round_robin", "priority", "fail_fast"]
+          description: Strategy when primary AI provider fails
+          default: "priority"
+      additionalProperties: false
+
+    # Advanced Configuration
+    advanced:
+      type: object
+      description: Advanced configuration options
+      properties:
+        debug_mode:
+          type: boolean
+          description: Enable debug logging
+          default: false
+        dry_run:
+          type: boolean
+          description: Test configuration without calling AI APIs
+          default: false
+        custom_prompts:
+          type: object
+          description: Custom AI prompts for different error types
+          properties:
+            default:
+              type: string
+              description: Default analysis prompt
+            compilation_error:
+              type: string
+              description: Prompt for compilation errors
+            test_failure:
+              type: string
+              description: Prompt for test failures
+            deployment_error:
+              type: string
+              description: Prompt for deployment errors
+          additionalProperties: false
+        max_retries:
+          type: integer
+          description: Maximum retry attempts for failed API calls
+          default: 3
+        rate_limit:
+          type: object
+          description: Rate limiting configuration
+          properties:
+            requests_per_minute:
+              type: integer
+              default: 30
+            burst_limit:
+              type: integer
+              default: 10
+          additionalProperties: false
+      additionalProperties: false
+
+  additionalProperties: false

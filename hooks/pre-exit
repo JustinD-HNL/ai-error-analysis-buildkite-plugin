@@ -1,0 +1,165 @@
+#!/bin/bash
+set -euo pipefail
+
+# AI Error Analysis Buildkite Plugin - Pre-Exit Hook
+# This hook runs before the job exits and handles cleanup
+
+# Check if plugin was initialized
+if [[ "${AI_ERROR_ANALYSIS_INITIALIZED:-false}" != "true" ]]; then
+  exit 0
+fi
+
+LOG_PREFIX="${AI_ERROR_ANALYSIS_LOG_PREFIX:-🤖 [AI Error Analysis]}"
+DEBUG_MODE="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_DEBUG_MODE:-false}"
+
+echo "--- ${LOG_PREFIX} Cleaning up"
+
+# Wait for background analysis to complete if running async
+ASYNC_EXECUTION="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_ASYNC_EXECUTION:-false}"
+if [[ "${ASYNC_EXECUTION}" == "true" ]]; then
+  echo "⏳ Waiting for background analysis to complete..."
+  
+  # Wait for background jobs with timeout
+  local timeout=30
+  local waited=0
+  
+  while jobs %% &>/dev/null && [[ $waited -lt $timeout ]]; do
+    sleep 1
+    ((waited++))
+  done
+  
+  if [[ $waited -ge $timeout ]]; then
+    echo "⚠️ Background analysis did not complete within ${timeout} seconds"
+    jobs -p | xargs -r kill 2>/dev/null || true
+  else
+    echo "✅ Background analysis completed"
+  fi
+fi
+
+# Clean up temporary directories
+cleanup_temp_dirs() {
+  local temp_patterns=(
+    "${AI_ERROR_ANALYSIS_TEMP_DIR:-/tmp/ai-error-analysis-*}"
+    "/tmp/ai-error-analysis-*"
+  )
+  
+  for pattern in "${temp_patterns[@]}"; do
+    if [[ -n "${pattern}" ]]; then
+      find /tmp -maxdepth 1 -name "$(basename "${pattern}")" -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
+    fi
+  done
+}
+
+cleanup_temp_dirs
+
+# Clean up old cache entries if caching is enabled
+cleanup_cache() {
+  local cache_enabled="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_CACHE_ENABLED:-true}"
+  local cache_dir="${AI_ERROR_ANALYSIS_CACHE_DIR:-}"
+  local cache_ttl="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_CACHE_TTL:-3600}"
+  
+  if [[ "${cache_enabled}" == "true" ]] && [[ -n "${cache_dir}" ]] && [[ -d "${cache_dir}" ]]; then
+    echo "🧹 Cleaning expired cache entries..."
+    
+    # Remove cache files older than TTL
+    find "${cache_dir}" -type f -name "*.json" -mmin +$((cache_ttl / 60)) -delete 2>/dev/null || true
+    
+    # Remove empty directories
+    find "${cache_dir}" -type d -empty -delete 2>/dev/null || true
+    
+    # Report cache status
+    local cache_files=$(find "${cache_dir}" -type f -name "*.json" 2>/dev/null | wc -l)
+    if [[ $cache_files -gt 0 ]]; then
+      echo "💾 Cache contains ${cache_files} entries"
+    fi
+  fi
+}
+
+cleanup_cache
+
+# Report final statistics
+report_statistics() {
+  if [[ "${DEBUG_MODE}" == "true" ]]; then
+    echo "--- ${LOG_PREFIX} Final Statistics"
+    
+    # Build duration
+    if [[ -n "${BUILDKITE_JOB_STARTED_AT:-}" ]]; then
+      local start_time=$(date -d "${BUILDKITE_JOB_STARTED_AT}" +%s 2>/dev/null || echo "0")
+      local current_time=$(date +%s)
+      local duration=$((current_time - start_time))
+      echo "Build duration: ${duration} seconds"
+    fi
+    
+    # Memory usage
+    local memory_info=$(free -h 2>/dev/null | grep '^Mem:' | awk '{print "Used: " $3 ", Available: " $7}' || echo "N/A")
+    echo "Memory: ${memory_info}"
+    
+    # Disk usage
+    local disk_usage=$(df -h . 2>/dev/null | tail -1 | awk '{print "Used: " $3 ", Available: " $4}' || echo "N/A")
+    echo "Disk: ${disk_usage}"
+    
+    # Plugin performance metrics
+    if [[ -f "/tmp/ai-error-analysis-metrics.log" ]]; then
+      echo "Plugin metrics:"
+      cat "/tmp/ai-error-analysis-metrics.log"
+      rm -f "/tmp/ai-error-analysis-metrics.log"
+    fi
+  fi
+}
+
+report_statistics
+
+# Security cleanup - remove any sensitive data from environment
+security_cleanup() {
+  # Remove any AI API keys from environment if they were temporarily set
+  unset AI_ERROR_ANALYSIS_API_KEY 2>/dev/null || true
+  unset OPENAI_API_KEY 2>/dev/null || true
+  unset ANTHROPIC_API_KEY 2>/dev/null || true
+  unset GOOGLE_API_KEY 2>/dev/null || true
+  
+  # Clear any temporary redaction patterns
+  unset AI_ERROR_ANALYSIS_REDACTION_PATTERNS 2>/dev/null || true
+  
+  # Remove plugin-specific environment variables
+  env | grep '^AI_ERROR_ANALYSIS_' | cut -d= -f1 | while read -r var; do
+    unset "$var" 2>/dev/null || true
+  done
+}
+
+security_cleanup
+
+# Health check for future runs
+health_check() {
+  local plugin_dir="${AI_ERROR_ANALYSIS_PLUGIN_DIR:-}"
+  
+  if [[ -n "${plugin_dir}" ]] && [[ -d "${plugin_dir}" ]]; then
+    # Verify plugin integrity
+    if [[ -f "${plugin_dir}/plugin.yml" ]] && [[ -f "${plugin_dir}/lib/ai_providers.py" ]]; then
+      echo "✅ Plugin integrity verified"
+    else
+      echo "⚠️ Plugin integrity check failed - some files may be missing"
+    fi
+  fi
+}
+
+health_check
+
+# Log rotation for plugin logs if needed
+rotate_logs() {
+  local log_dir="/tmp/ai-error-analysis-logs"
+  
+  if [[ -d "${log_dir}" ]]; then
+    # Keep only the last 10 log files
+    find "${log_dir}" -name "*.log" -type f | sort -r | tail -n +11 | xargs -r rm -f
+    
+    # Compress old logs
+    find "${log_dir}" -name "*.log" -type f -mtime +1 -exec gzip {} \; 2>/dev/null || true
+  fi
+}
+
+rotate_logs
+
+echo "✅ ${LOG_PREFIX} Cleanup completed"
+
+# Exit with success to not affect build result
+exit 0

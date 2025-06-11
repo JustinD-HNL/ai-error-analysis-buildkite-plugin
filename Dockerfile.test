@@ -1,0 +1,44 @@
+FROM python:3.9-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    jq \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    requests \
+    pytest \
+    pytest-cov \
+    pytest-mock \
+    python-dateutil
+
+# Install BATS (Bash Automated Testing System)
+RUN git clone https://github.com/bats-core/bats-core.git /tmp/bats-core \
+    && cd /tmp/bats-core \
+    && ./install.sh /usr/local \
+    && rm -rf /tmp/bats-core
+
+# Install BATS helpers
+RUN git clone https://github.com/bats-core/bats-support.git /usr/local/lib/bats-support \
+    && git clone https://github.com/bats-core/bats-assert.git /usr/local/lib/bats-assert \
+    && git clone https://github.com/bats-core/bats-file.git /usr/local/lib/bats-file
+
+# Create test user
+RUN useradd -m -s /bin/bash testuser
+
+# Set up working directory
+WORKDIR /app
+
+# Switch to test user
+USER testuser
+
+# Set environment variables
+ENV PYTHONPATH=/app/lib
+ENV PATH="/usr/local/bin:$PATH"
+
+# Default command
+CMD ["python3", "--version"]

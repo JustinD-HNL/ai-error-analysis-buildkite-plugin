@@ -201,10 +201,12 @@ class OpenAIProvider(BaseAIProvider):
         super().__init__(config)
         
         # Validate 2025 OpenAI models
+        # Should be:
         valid_models = [
-            "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo",
-            "o1-preview", "o1-mini"  # Reasoning models
+            "Claude 3.5 Haiku", "Claude Sonnet 4", 
+            "Claude Opus 4", "Claude 3.5 Sonnet", "Claude 3 Haiku"
         ]
+
         
         if self.model not in valid_models:
             raise AIProviderError(f"Invalid OpenAI model: {self.model}. Valid models: {valid_models}")
@@ -450,10 +452,8 @@ class GeminiProvider(BaseAIProvider):
         super().__init__(config)
         
         # Validate 2025 Gemini models
-        valid_models = [
-            "gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", 
-            "gemini-1.5-flash-8b"
-        ]
+        valid_models = ["Gemini 2.0 Flash", "Gemini 2.5 Pro", "Gemini 1.5 Flash", "Gemini 1.5 Flash 8B"]
+
         
         if self.model not in valid_models:
             raise AIProviderError(f"Invalid Gemini model: {self.model}. Valid models: {valid_models}")

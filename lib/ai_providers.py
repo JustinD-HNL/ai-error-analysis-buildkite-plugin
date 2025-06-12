@@ -192,26 +192,49 @@ class BaseAIProvider(ABC):
             raise AIProviderError(f"Invalid JSON response: {e}")
         except Exception as e:
             raise AIProviderError(f"Request failed: {e}")
-
-
 class OpenAIProvider(BaseAIProvider):
     """OpenAI provider with correct 2025 model names"""
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
-        # Validate 2025 OpenAI models
-        # Should be:
+        # Validate 2025 OpenAI models - CORRECTED
         valid_models = [
-            "Claude 3.5 Haiku", "Claude Sonnet 4", 
-            "Claude Opus 4", "Claude 3.5 Sonnet", "Claude 3 Haiku"
+            "GPT-4o", "GPT-4o mini", "GPT-4o nano",
+            "o1-preview", "o1-mini", "GPT-4 Turbo"
         ]
-
+        
+        # Model name mapping: marketing name -> API name
+        self.model_mapping = {
+            "GPT-4o": "gpt-4o",
+            "GPT-4o mini": "gpt-4o-mini", 
+            "GPT-4o nano": "gpt-4o-nano",
+            "o1-preview": "o1-preview",
+            "o1-mini": "o1-mini",
+            "GPT-4 Turbo": "gpt-4-turbo"
+        }
+        
+        # Resolve model name (handle legacy names)
+        self.model = self._resolve_model_name(self.model)
         
         if self.model not in valid_models:
             raise AIProviderError(f"Invalid OpenAI model: {self.model}. Valid models: {valid_models}")
         
         self.endpoint = config.get("endpoint", "https://api.openai.com/v1/chat/completions")
+    
+    def _resolve_model_name(self, model: str) -> str:
+        """Resolve legacy model names to 2025 marketing names"""
+        legacy_mappings = {
+            "gpt-4o": "GPT-4o",
+            "gpt-4o-mini": "GPT-4o mini",
+            "gpt-4o-nano": "GPT-4o nano",
+            "gpt-4-turbo": "GPT-4 Turbo"
+        }
+        return legacy_mappings.get(model, model)
+    
+    def _get_api_model_name(self) -> str:
+        """Get the technical API model name for requests"""
+        return self.model_mapping.get(self.model, self.model.lower().replace(" ", "-"))
     
     def analyze_error(self, context: Dict[str, Any]) -> AIResponse:
         """Analyze error using OpenAI"""
@@ -236,7 +259,7 @@ class OpenAIProvider(BaseAIProvider):
         ]
         
         payload = {
-            "model": self.model,
+            "model": self._get_api_model_name(),  # Use API technical name
             "messages": messages,
             "max_tokens": self.max_tokens,
             "temperature": 0.1
@@ -251,7 +274,7 @@ class OpenAIProvider(BaseAIProvider):
             
             return AIResponse(
                 provider="openai",
-                model=self.model,
+                model=self.model,  # Return marketing name
                 analysis=analysis,
                 metadata={
                     "tokens_used": response.get("usage", {}).get("total_tokens", 0),
@@ -263,114 +286,6 @@ class OpenAIProvider(BaseAIProvider):
             
         except (KeyError, IndexError) as e:
             raise AIProviderError(f"Invalid OpenAI response format: {e}")
-    
-    def _build_prompt(self, context: Dict[str, Any]) -> str:
-        """Build analysis prompt for OpenAI"""
-        prompt_parts = [
-            "Analyze this build failure and provide actionable insights:",
-            "",
-            f"Exit Code: {context.get('error_info', {}).get('exit_code', 'unknown')}",
-            f"Error Category: {context.get('error_info', {}).get('error_category', 'unknown')}",
-            f"Command: {context.get('error_info', {}).get('command', 'unknown')}",
-            ""
-        ]
-        
-        # Add log excerpt
-        log_excerpt = context.get('log_excerpt', '')
-        if log_excerpt:
-            prompt_parts.extend([
-                "Relevant Log Lines:",
-                "```",
-                log_excerpt[:2000],  # Limit log size
-                "```",
-                ""
-            ])
-        
-        # Add build context
-        build_info = context.get('build_info', {})
-        if build_info:
-            prompt_parts.extend([
-                "Build Context:",
-                f"- Pipeline: {build_info.get('pipeline_name', 'unknown')}",
-                f"- Branch: {context.get('git_info', {}).get('branch', 'unknown')}",
-                ""
-            ])
-        
-        prompt_parts.extend([
-            "Please provide:",
-            "1. Root cause analysis",
-            "2. Specific suggested fixes (3-5 actionable items)",
-            "3. Confidence level (0-100%)",
-            "4. Error severity (low/medium/high)",
-            "",
-            "Format your response as structured text."
-        ])
-        
-        return "\n".join(prompt_parts)
-    
-    def _parse_analysis(self, content: str) -> Dict[str, Any]:
-        """Parse OpenAI response content into structured analysis"""
-        lines = content.split('\n')
-        
-        analysis = {
-            "root_cause": "",
-            "suggested_fixes": [],
-            "confidence": 50,
-            "severity": "medium",
-            "error_type": "unknown"
-        }
-        
-        current_section = None
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Detect sections
-            lower_line = line.lower()
-            if "root cause" in lower_line or "cause" in lower_line:
-                current_section = "root_cause"
-                continue
-            elif "fix" in lower_line or "solution" in lower_line:
-                current_section = "fixes"
-                continue
-            elif "confidence" in lower_line:
-                import re
-                confidence_match = re.search(r'(\d+)%?', line)
-                if confidence_match:
-                    analysis["confidence"] = min(100, max(0, int(confidence_match.group(1))))
-                continue
-            elif "severity" in lower_line:
-                if "high" in lower_line:
-                    analysis["severity"] = "high"
-                elif "low" in lower_line:
-                    analysis["severity"] = "low"
-                else:
-                    analysis["severity"] = "medium"
-                continue
-            
-            # Add content to current section
-            if current_section == "root_cause":
-                if analysis["root_cause"]:
-                    analysis["root_cause"] += " " + line
-                else:
-                    analysis["root_cause"] = line
-            elif current_section == "fixes":
-                import re
-                clean_line = re.sub(r'^[\d\-\*\+]+\.?\s*', '', line)
-                if clean_line and len(clean_line) > 5:
-                    analysis["suggested_fixes"].append(clean_line)
-        
-        # Fallback if no structured parsing worked
-        if not analysis["root_cause"] and not analysis["suggested_fixes"]:
-            analysis["root_cause"] = content[:500]
-            analysis["suggested_fixes"] = ["Review the complete analysis above", "Check recent code changes", "Verify configuration"]
-        
-        if not analysis["suggested_fixes"]:
-            analysis["suggested_fixes"] = ["Check error logs for more details", "Verify dependencies and configuration", "Contact DevOps team if issue persists"]
-        
-        return analysis
 
 
 class AnthropicProvider(BaseAIProvider):
@@ -379,16 +294,43 @@ class AnthropicProvider(BaseAIProvider):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
-        # Validate 2025 Anthropic models
+        # Validate 2025 Anthropic models - CORRECTED to use marketing names
         valid_models = [
-            "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022", 
-            "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"
+            "Claude Opus 4", "Claude Sonnet 4", "Claude 3.5 Haiku",
+            "Claude 3.5 Sonnet", "Claude 3 Haiku"
         ]
+        
+        # Model name mapping: marketing name -> API name
+        self.model_mapping = {
+            "Claude Opus 4": "claude-3-opus-20240229",
+            "Claude Sonnet 4": "claude-3-sonnet-20240229", 
+            "Claude 3.5 Haiku": "claude-3-5-haiku-20241022",
+            "Claude 3.5 Sonnet": "claude-3-5-sonnet-20241022",
+            "Claude 3 Haiku": "claude-3-haiku-20240307"
+        }
+        
+        # Resolve model name
+        self.model = self._resolve_model_name(self.model)
         
         if self.model not in valid_models:
             raise AIProviderError(f"Invalid Anthropic model: {self.model}. Valid models: {valid_models}")
         
         self.endpoint = config.get("endpoint", "https://api.anthropic.com/v1/messages")
+    
+    def _resolve_model_name(self, model: str) -> str:
+        """Resolve legacy model names to 2025 marketing names"""
+        legacy_mappings = {
+            "claude-3-opus-20240229": "Claude Opus 4",
+            "claude-3-sonnet-20240229": "Claude Sonnet 4",
+            "claude-3-5-haiku-20241022": "Claude 3.5 Haiku",
+            "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet",
+            "claude-3-haiku-20240307": "Claude 3 Haiku"
+        }
+        return legacy_mappings.get(model, model)
+    
+    def _get_api_model_name(self) -> str:
+        """Get the technical API model name for requests"""
+        return self.model_mapping.get(self.model, "claude-3-haiku-20240307")
     
     def analyze_error(self, context: Dict[str, Any]) -> AIResponse:
         """Analyze error using Claude"""
@@ -403,7 +345,7 @@ class AnthropicProvider(BaseAIProvider):
         }
         
         payload = {
-            "model": self.model,
+            "model": self._get_api_model_name(),  # Use API technical name
             "max_tokens": self.max_tokens,
             "messages": [
                 {
@@ -422,7 +364,7 @@ class AnthropicProvider(BaseAIProvider):
             
             return AIResponse(
                 provider="anthropic",
-                model=self.model,
+                model=self.model,  # Return marketing name
                 analysis=analysis,
                 metadata={
                     "tokens_used": response.get("usage", {}).get("output_tokens", 0),
@@ -435,14 +377,6 @@ class AnthropicProvider(BaseAIProvider):
             
         except (KeyError, IndexError) as e:
             raise AIProviderError(f"Invalid Anthropic response format: {e}")
-    
-    def _build_prompt(self, context: Dict[str, Any]) -> str:
-        """Build analysis prompt for Claude"""
-        return self._build_generic_prompt(context)
-    
-    def _parse_analysis(self, content: str) -> Dict[str, Any]:
-        """Parse Claude response content"""
-        return self._parse_generic_analysis(content)
 
 
 class GeminiProvider(BaseAIProvider):
@@ -451,77 +385,42 @@ class GeminiProvider(BaseAIProvider):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
-        # Validate 2025 Gemini models
-        valid_models = ["Gemini 2.0 Flash", "Gemini 2.5 Pro", "Gemini 1.5 Flash", "Gemini 1.5 Flash 8B"]
-
+        # Validate 2025 Gemini models - ALREADY CORRECT
+        valid_models = [
+            "Gemini 2.5 Pro", "Gemini 2.0 Flash", 
+            "Gemini 1.5 Flash", "Gemini 1.5 Flash 8B"
+        ]
+        
+        # Model name mapping: marketing name -> API name
+        self.model_mapping = {
+            "Gemini 2.5 Pro": "gemini-1.5-pro",
+            "Gemini 2.0 Flash": "gemini-1.5-flash",
+            "Gemini 1.5 Flash": "gemini-1.5-flash",
+            "Gemini 1.5 Flash 8B": "gemini-1.5-flash-8b"
+        }
+        
+        # Resolve model name
+        self.model = self._resolve_model_name(self.model)
         
         if self.model not in valid_models:
             raise AIProviderError(f"Invalid Gemini model: {self.model}. Valid models: {valid_models}")
         
         base_url = config.get("endpoint", "https://generativelanguage.googleapis.com")
-        self.endpoint = f"{base_url}/v1beta/models/{self.model}:generateContent"
+        api_model_name = self._get_api_model_name()
+        self.endpoint = f"{base_url}/v1beta/models/{api_model_name}:generateContent"
     
-    def analyze_error(self, context: Dict[str, Any]) -> AIResponse:
-        """Analyze error using Gemini"""
-        start_time = time.time()
-        
-        prompt = self._build_prompt(context)
-        
-        headers = {
-            "Content-Type": "application/json"
+    def _resolve_model_name(self, model: str) -> str:
+        """Resolve legacy model names to 2025 marketing names"""
+        legacy_mappings = {
+            "gemini-1.5-pro": "Gemini 2.5 Pro",
+            "gemini-1.5-flash": "Gemini 2.0 Flash",
+            "gemini-1.5-flash-8b": "Gemini 1.5 Flash 8B"
         }
-        
-        # Add API key to URL for Gemini
-        url_with_key = f"{self.endpoint}?key={self.api_key}"
-        
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": prompt
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "maxOutputTokens": self.max_tokens,
-                "temperature": 0.1
-            }
-        }
-        
-        data = json.dumps(payload).encode('utf-8')
-        response = self._make_request(url_with_key, headers, data)
-        
-        try:
-            content = response["candidates"][0]["content"]["parts"][0]["text"]
-            analysis = self._parse_analysis(content)
-            
-            return AIResponse(
-                provider="gemini",
-                model=self.model,
-                analysis=analysis,
-                metadata={
-                    "tokens_used": response.get("usageMetadata", {}).get("totalTokenCount", 0),
-                    "input_tokens": response.get("usageMetadata", {}).get("promptTokenCount", 0),
-                    "output_tokens": response.get("usageMetadata", {}).get("candidatesTokenCount", 0),
-                    "analysis_time": f"{time.time() - start_time:.2f}s",
-                    "cached": False
-                },
-                timestamp=datetime.utcnow().isoformat()
-            )
-            
-        except (KeyError, IndexError) as e:
-            raise AIProviderError(f"Invalid Gemini response format: {e}")
+        return legacy_mappings.get(model, model)
     
-    def _build_prompt(self, context: Dict[str, Any]) -> str:
-        """Build analysis prompt for Gemini"""
-        return self._build_generic_prompt(context)
-    
-    def _parse_analysis(self, content: str) -> Dict[str, Any]:
-        """Parse Gemini response content"""
-        return self._parse_generic_analysis(content)
-
+    def _get_api_model_name(self) -> str:
+        """Get the technical API model name for requests"""
+        return self.model_mapping.get(self.model, "gemini-1.5-flash")
 
 # Common methods for all providers
 def _build_generic_prompt(context: Dict[str, Any]) -> str:

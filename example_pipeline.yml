@@ -1,0 +1,63 @@
+# Example pipeline configuration for testing the AI Error Analysis plugin
+# Save this as .buildkite/pipeline.yml in your repository
+
+steps:
+  # Test step that will fail to trigger AI analysis
+  - label: "🧪 Test Step (Will Fail)"
+    command: |
+      echo "Running a test that will fail..."
+      echo "ERROR: This is a test error message"
+      echo "npm ERR! Test failed with exit code 1"
+      echo "    at testFunction (test.js:42:15)"
+      echo "    Expected: true, Received: false"
+      exit 1
+    plugins:
+      - JustinD-HNL/ai-error-analysis-buildkite-plugin#main:
+          # Basic configuration using environment variables
+          provider: "openai"
+          model: "gpt-4o-mini"
+          debug: true
+    
+  # Test step that will succeed (should not trigger analysis)
+  - label: "✅ Test Step (Will Succeed)"
+    command: |
+      echo "Running a test that will succeed..."
+      echo "All tests passed!"
+      exit 0
+    plugins:
+      - JustinD-HNL/ai-error-analysis-buildkite-plugin#main:
+          provider: "openai"
+          model: "gpt-4o-mini"
+          debug: true
+
+# Alternative configuration examples:
+
+# Using Anthropic Claude:
+# - label: "Test with Claude"
+#   command: "npm test"
+#   plugins:
+#     - JustinD-HNL/ai-error-analysis-buildkite-plugin#main:
+#         provider: "anthropic"
+#         model: "claude-3-5-haiku-20241022"
+
+# Using Google Gemini:
+# - label: "Test with Gemini"
+#   command: "npm test"
+#   plugins:
+#     - JustinD-HNL/ai-error-analysis-buildkite-plugin#main:
+#         provider: "gemini"
+#         model: "gemini-1.5-flash"
+
+# With custom configuration:
+# - label: "Custom Configuration"
+#   command: "npm test"
+#   plugins:
+#     - JustinD-HNL/ai-error-analysis-buildkite-plugin#main:
+#         provider: "openai"
+#         model: "gpt-4o-mini"
+#         max_tokens: 1500
+#         enable_caching: true
+#         debug: true
+#         context:
+#           include_git_info: true
+#           custom_context: "Node.js application with Jest testing"

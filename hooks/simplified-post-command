@@ -1,0 +1,552 @@
+#!/bin/bash
+set -euo pipefail
+
+# AI Error Analysis Buildkite Plugin - Post-Command Hook (Simplified)
+# This is a simplified version for initial testing
+# This hook runs after the command execution and performs AI error analysis
+# rename: hooks/simplified-post-command to hooks/post-command to use this simple version
+
+
+# Check if plugin was initialized
+if [[ "${AI_ERROR_ANALYSIS_INITIALIZED:-false}" != "true" ]]; then
+    echo "AI Error Analysis plugin not properly initialized, skipping analysis"
+    exit 0
+fi
+
+LOG_PREFIX="${AI_ERROR_ANALYSIS_LOG_PREFIX:-🤖 [AI Error Analysis]}"
+DEBUG="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_DEBUG:-false}"
+
+echo "--- ${LOG_PREFIX} Analyzing command execution"
+
+# Get command exit status
+COMMAND_EXIT_STATUS="${BUILDKITE_COMMAND_EXIT_STATUS:-0}"
+echo "Command exit status: ${COMMAND_EXIT_STATUS}"
+
+# Only analyze failures by default
+if [[ "${COMMAND_EXIT_STATUS}" -eq 0 ]]; then
+    echo "✅ Command succeeded, skipping analysis"
+    exit 0
+fi
+
+# Get basic configuration
+PROVIDER="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER:-openai}"
+MODEL="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MODEL:-gpt-4o-mini}"
+MAX_TOKENS="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MAX_TOKENS:-1000}"
+ENABLE_CACHING="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ENABLE_CACHING:-true}"
+
+echo "Using provider: ${PROVIDER} with model: ${MODEL}"
+
+# Validate provider
+case "${PROVIDER}" in
+    openai|anthropic|gemini)
+        echo "✅ Valid provider: ${PROVIDER}"
+        ;;
+    *)
+        echo "❌ Unsupported provider: ${PROVIDER}"
+        exit 1
+        ;;
+esac
+
+# Create secure temporary directory
+TEMP_DIR=$(mktemp -d)
+chmod 700 "${TEMP_DIR}"
+
+# Enhanced cleanup function
+cleanup() {
+    local exit_code=$?
+    if [[ -d "${TEMP_DIR}" ]]; then
+        rm -rf "${TEMP_DIR}"
+    fi
+    exit $exit_code
+}
+trap cleanup EXIT
+
+# Get API key (simplified)
+get_api_key() {
+    local api_key_env="${PROVIDER^^}_API_KEY"
+    local api_key="${!api_key_env:-}"
+    
+    if [[ -z "$api_key" ]]; then
+        echo "❌ API key not found in environment variable: $api_key_env"
+        echo "Please set your API key:"
+        echo "export ${api_key_env}=\"your-api-key-here\""
+        return 1
+    fi
+    
+    export AI_ERROR_ANALYSIS_API_KEY="$api_key"
+    echo "✅ API key found"
+    return 0
+}
+
+# Collect basic context
+collect_context() {
+    echo "📋 Collecting build context..."
+    
+    # Get recent log output (simplified)
+    local log_content="No logs available"
+    if [[ -f "${BUILDKITE_BUILD_PATH}/buildkite.log" ]]; then
+        log_content=$(tail -n 50 "${BUILDKITE_BUILD_PATH}/buildkite.log" 2>/dev/null || echo "Could not read log file")
+    elif command -v journalctl >/dev/null 2>&1; then
+        log_content=$(journalctl --since "5 minutes ago" --no-pager -q 2>/dev/null | tail -n 50 || echo "Could not read system logs")
+    fi
+    
+    # Create context JSON
+    cat > "${TEMP_DIR}/context.json" << EOF
+{
+    "build_info": {
+        "build_id": "${BUILDKITE_BUILD_ID:-unknown}",
+        "build_number": "${BUILDKITE_BUILD_NUMBER:-unknown}",
+        "pipeline": "${BUILDKITE_PIPELINE_SLUG:-unknown}",
+        "step_key": "${BUILDKITE_STEP_KEY:-unknown}",
+        "branch": "${BUILDKITE_BRANCH:-unknown}",
+        "commit": "${BUILDKITE_COMMIT:-unknown}",
+        "command": "${BUILDKITE_COMMAND:-unknown}",
+        "exit_status": ${COMMAND_EXIT_STATUS}
+    },
+    "error_info": {
+        "exit_code": ${COMMAND_EXIT_STATUS},
+        "command": "${BUILDKITE_COMMAND:-unknown}",
+        "error_category": "build_failure"
+    },
+    "log_excerpt": "${log_content//\"/\\\"}",
+    "git_info": {
+        "branch": "${BUILDKITE_BRANCH:-unknown}",
+        "commit": "${BUILDKITE_COMMIT:-unknown}"
+    },
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+    
+    echo "✅ Context collected"
+}
+
+# Simple AI analysis using Python
+analyze_with_ai() {
+    echo "🤖 Analyzing with ${PROVIDER}..."
+    
+    # Create simple Python analysis script
+    cat > "${TEMP_DIR}/analyze.py" << 'EOF'
+#!/usr/bin/env python3
+import json
+import sys
+import os
+import urllib.request
+import urllib.parse
+from datetime import datetime
+
+def make_openai_request(context, api_key, model, max_tokens):
+    """Make request to OpenAI API"""
+    url = "https://api.openai.com/v1/chat/completions"
+    
+    # Build prompt
+    build_info = context.get("build_info", {})
+    log_excerpt = context.get("log_excerpt", "")
+    
+    prompt = f"""Analyze this CI/CD build failure and provide actionable insights.
+
+BUILD INFORMATION:
+- Pipeline: {build_info.get('pipeline', 'unknown')}
+- Branch: {build_info.get('branch', 'unknown')}
+- Command: {build_info.get('command', 'unknown')}
+- Exit Status: {build_info.get('exit_status', 'unknown')}
+
+LOG EXCERPT:
+{log_excerpt[:1500]}
+
+Please provide:
+1. ROOT CAUSE: What specifically went wrong?
+2. SUGGESTED FIXES: 3-5 specific, actionable solutions
+3. CONFIDENCE: Your confidence level (0-100%)
+
+Format your response clearly with these sections."""
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are an expert DevOps engineer analyzing CI/CD failures."},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.1
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers=headers)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            response_data = response.read().decode('utf-8')
+            return json.loads(response_data)
+    except Exception as e:
+        raise Exception(f"OpenAI API call failed: {str(e)}")
+
+def make_anthropic_request(context, api_key, model, max_tokens):
+    """Make request to Anthropic API"""
+    url = "https://api.anthropic.com/v1/messages"
+    
+    # Build prompt (same as OpenAI)
+    build_info = context.get("build_info", {})
+    log_excerpt = context.get("log_excerpt", "")
+    
+    prompt = f"""Analyze this CI/CD build failure and provide actionable insights.
+
+BUILD INFORMATION:
+- Pipeline: {build_info.get('pipeline', 'unknown')}
+- Branch: {build_info.get('branch', 'unknown')}
+- Command: {build_info.get('command', 'unknown')}
+- Exit Status: {build_info.get('exit_status', 'unknown')}
+
+LOG EXCERPT:
+{log_excerpt[:1500]}
+
+Please provide:
+1. ROOT CAUSE: What specifically went wrong?
+2. SUGGESTED FIXES: 3-5 specific, actionable solutions
+3. CONFIDENCE: Your confidence level (0-100%)
+
+Format your response clearly with these sections."""
+
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    
+    headers = {
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01"
+    }
+    
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers=headers)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            response_data = response.read().decode('utf-8')
+            return json.loads(response_data)
+    except Exception as e:
+        raise Exception(f"Anthropic API call failed: {str(e)}")
+
+def make_gemini_request(context, api_key, model, max_tokens):
+    """Make request to Google Gemini API"""
+    # Build prompt (same as others)
+    build_info = context.get("build_info", {})
+    log_excerpt = context.get("log_excerpt", "")
+    
+    prompt = f"""Analyze this CI/CD build failure and provide actionable insights.
+
+BUILD INFORMATION:
+- Pipeline: {build_info.get('pipeline', 'unknown')}
+- Branch: {build_info.get('branch', 'unknown')}
+- Command: {build_info.get('command', 'unknown')}
+- Exit Status: {build_info.get('exit_status', 'unknown')}
+
+LOG EXCERPT:
+{log_excerpt[:1500]}
+
+Please provide:
+1. ROOT CAUSE: What specifically went wrong?
+2. SUGGESTED FIXES: 3-5 specific, actionable solutions
+3. CONFIDENCE: Your confidence level (0-100%)
+
+Format your response clearly with these sections."""
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": max_tokens,
+            "temperature": 0.1
+        }
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers=headers)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            response_data = response.read().decode('utf-8')
+            return json.loads(response_data)
+    except Exception as e:
+        raise Exception(f"Gemini API call failed: {str(e)}")
+
+def parse_response(response, provider):
+    """Parse AI response into structured format"""
+    try:
+        if provider == "openai":
+            content = response["choices"][0]["message"]["content"]
+            tokens_used = response.get("usage", {}).get("total_tokens", 0)
+        elif provider == "anthropic":
+            content = response["content"][0]["text"]
+            tokens_used = response.get("usage", {}).get("output_tokens", 0)
+        elif provider == "gemini":
+            content = response["candidates"][0]["content"]["parts"][0]["text"]
+            tokens_used = response.get("usageMetadata", {}).get("totalTokenCount", 0)
+        else:
+            raise Exception(f"Unknown provider: {provider}")
+        
+        # Simple parsing
+        analysis = {
+            "root_cause": "Analysis completed - see full response below",
+            "suggested_fixes": ["Review the AI analysis below", "Check recent code changes", "Verify configuration"],
+            "confidence": 75,
+            "full_response": content,
+            "tokens_used": tokens_used
+        }
+        
+        return analysis
+        
+    except Exception as e:
+        raise Exception(f"Failed to parse response: {str(e)}")
+
+def main():
+    if len(sys.argv) != 6:
+        print("Usage: analyze.py <context_file> <provider> <model> <max_tokens> <output_file>")
+        sys.exit(1)
+    
+    context_file = sys.argv[1]
+    provider = sys.argv[2]
+    model = sys.argv[3]
+    max_tokens = int(sys.argv[4])
+    output_file = sys.argv[5]
+    
+    api_key = os.environ.get("AI_ERROR_ANALYSIS_API_KEY")
+    if not api_key:
+        print("❌ API key not found in environment")
+        sys.exit(1)
+    
+    try:
+        # Load context
+        with open(context_file, 'r') as f:
+            context = json.load(f)
+        
+        # Make API call
+        if provider == "openai":
+            response = make_openai_request(context, api_key, model, max_tokens)
+        elif provider == "anthropic":
+            response = make_anthropic_request(context, api_key, model, max_tokens)
+        elif provider == "gemini":
+            response = make_gemini_request(context, api_key, model, max_tokens)
+        else:
+            raise Exception(f"Unsupported provider: {provider}")
+        
+        # Parse response
+        analysis = parse_response(response, provider)
+        
+        # Create result
+        result = {
+            "provider": provider,
+            "model": model,
+            "analysis": analysis,
+            "metadata": {
+                "tokens_used": analysis.get("tokens_used", 0),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        }
+        
+        # Save result
+        with open(output_file, 'w') as f:
+            json.dump(result, f, indent=2)
+        
+        print(f"✅ Analysis completed successfully")
+        
+    except Exception as e:
+        print(f"❌ Analysis failed: {str(e)}")
+        
+        # Create error result
+        error_result = {
+            "provider": provider,
+            "model": model,
+            "analysis": {
+                "root_cause": f"AI analysis failed: {str(e)}",
+                "suggested_fixes": [
+                    "Check API key configuration",
+                    "Verify network connectivity",
+                    "Review error logs manually"
+                ],
+                "confidence": 0,
+                "full_response": f"Error: {str(e)}"
+            },
+            "metadata": {
+                "tokens_used": 0,
+                "timestamp": datetime.utcnow().isoformat(),
+                "error": str(e)
+            }
+        }
+        
+        with open(output_file, 'w') as f:
+            json.dump(error_result, f, indent=2)
+        
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+EOF
+    
+    # Run analysis
+    if python3 "${TEMP_DIR}/analyze.py" \
+        "${TEMP_DIR}/context.json" \
+        "${PROVIDER}" \
+        "${MODEL}" \
+        "${MAX_TOKENS}" \
+        "${TEMP_DIR}/analysis_result.json"; then
+        echo "✅ AI analysis completed"
+        return 0
+    else
+        echo "❌ AI analysis failed"
+        return 1
+    fi
+}
+
+# Generate and display report
+generate_report() {
+    echo "📊 Generating report..."
+    
+    if [[ ! -f "${TEMP_DIR}/analysis_result.json" ]]; then
+        echo "❌ Analysis result not found"
+        return 1
+    fi
+    
+    # Create simple HTML report
+    cat > "${TEMP_DIR}/report.html" << 'EOF'
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; border-left: 4px solid #e74c3c; padding: 12px; background: #fdf2f2; margin: 8px 0;">
+    <h3 style="margin: 0 0 8px 0; color: #c0392b;">🤖 AI Error Analysis</h3>
+    <div id="analysis-content">Loading analysis...</div>
+</div>
+
+<script>
+try {
+    const analysisData = ANALYSIS_JSON_PLACEHOLDER;
+    const analysis = analysisData.analysis;
+    const metadata = analysisData.metadata;
+    
+    let content = `
+        <div style="margin-bottom: 12px;">
+            <strong>Provider:</strong> ${analysisData.provider} (${analysisData.model})<br>
+            <strong>Tokens Used:</strong> ${metadata.tokens_used}<br>
+            <strong>Timestamp:</strong> ${metadata.timestamp}
+        </div>
+    `;
+    
+    if (analysis.full_response) {
+        content += `
+            <div style="background: white; border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-top: 8px;">
+                <strong>AI Analysis:</strong><br>
+                <pre style="white-space: pre-wrap; margin: 8px 0 0 0; font-size: 14px;">${analysis.full_response}</pre>
+            </div>
+        `;
+    }
+    
+    document.getElementById('analysis-content').innerHTML = content;
+} catch (e) {
+    document.getElementById('analysis-content').innerHTML = '<p style="color: #e74c3c;">Error loading analysis results</p>';
+}
+</script>
+EOF
+    
+    # Replace placeholder with actual JSON
+    local analysis_json=$(cat "${TEMP_DIR}/analysis_result.json")
+    sed "s/ANALYSIS_JSON_PLACEHOLDER/${analysis_json//\"/\\\"}/" "${TEMP_DIR}/report.html" > "${TEMP_DIR}/final_report.html"
+    
+    # Create Buildkite annotation
+    if command -v buildkite-agent >/dev/null; then
+        cat "${TEMP_DIR}/final_report.html" | buildkite-agent annotate \
+            --style "error" \
+            --context "ai-error-analysis"
+        echo "📝 Analysis annotation created"
+    else
+        echo "⚠️ buildkite-agent not available, displaying report:"
+        echo "Analysis completed with ${PROVIDER} (${MODEL})"
+        if [[ -f "${TEMP_DIR}/analysis_result.json" ]]; then
+            echo "Full response:"
+            python3 -c "
+import json
+with open('${TEMP_DIR}/analysis_result.json', 'r') as f:
+    data = json.load(f)
+    print(data['analysis'].get('full_response', 'No response available'))
+"
+        fi
+    fi
+}
+
+# Create fallback annotation if analysis fails
+create_fallback_annotation() {
+    local fallback_html='<div style="border-left: 4px solid #f39c12; padding: 12px; background: #fef8f1;">
+        <h3 style="margin: 0; color: #e67e22;">⚠️ AI Error Analysis Failed</h3>
+        <p style="margin: 8px 0 0 0;">The automated error analysis could not be completed. Please review the logs manually.</p>
+        <details style="margin-top: 8px;">
+            <summary style="cursor: pointer;">Troubleshooting</summary>
+            <ul style="margin: 8px 0; padding-left: 20px;">
+                <li>Verify API key is set correctly</li>
+                <li>Check network connectivity</li>
+                <li>Review plugin configuration</li>
+                <li>Enable debug mode for more details</li>
+            </ul>
+        </details>
+    </div>'
+    
+    if command -v buildkite-agent >/dev/null; then
+        echo "$fallback_html" | buildkite-agent annotate \
+            --style "warning" \
+            --context "ai-error-analysis-fallback"
+    fi
+}
+
+# Main analysis function
+main_analysis() {
+    echo "--- ${LOG_PREFIX} Starting error analysis"
+    
+    # Step 1: Get API key
+    if ! get_api_key; then
+        echo "❌ API key validation failed"
+        create_fallback_annotation
+        return 0  # Don't fail the build
+    fi
+    
+    # Step 2: Collect context
+    if ! collect_context; then
+        echo "❌ Context collection failed"
+        create_fallback_annotation
+        return 0
+    fi
+    
+    # Step 3: Analyze with AI
+    if ! analyze_with_ai; then
+        echo "❌ AI analysis failed"
+        create_fallback_annotation
+        return 0
+    fi
+    
+    # Step 4: Generate report
+    if ! generate_report; then
+        echo "❌ Report generation failed"
+        create_fallback_annotation
+        return 0
+    fi
+    
+    echo "✅ ${LOG_PREFIX} Analysis completed successfully"
+}
+
+# Debug output if enabled
+if [[ "$DEBUG" == "true" ]]; then
+    echo "--- ${LOG_PREFIX} Debug Information"
+    echo "Provider: $PROVIDER"
+    echo "Model: $MODEL"
+    echo "Max tokens: $MAX_TOKENS"
+    echo "Caching enabled: $ENABLE_CACHING"
+    echo "Temp directory: $TEMP_DIR"
+    echo "Command that failed: ${BUILDKITE_COMMAND:-unknown}"
+    echo "Exit status: $COMMAND_EXIT_STATUS"
+fi
+
+# Execute main analysis
+main_analysis

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI Error Analysis Buildkite Plugin - AI Providers
-Handles communication with multiple AI providers for error analysis (2025 Update)
+AI Error Analysis Buildkite Plugin - AI Providers (2025 Update)
+Handles communication with multiple AI providers using correct 2025 model names
 """
 
 import json
@@ -42,96 +42,122 @@ class BaseAIProvider(ABC):
         self.timeout = config.get("timeout", 60)
         self.max_tokens = config.get("max_tokens", 1000)
         self.endpoint = config.get("endpoint")
-        self.use_batch_api = config.get("use_batch_api", False)
+        self.enable_caching = config.get("enable_caching", True)
         
-        # Security: Validate inputs
+        # Validate configuration
         self._validate_config()
         
     def _validate_config(self):
         """Validate configuration for security"""
-        if self.timeout > 600:
-            raise AIProviderError("Timeout cannot exceed 600 seconds")
-        if self.max_tokens > 100000:
-            raise AIProviderError("Max tokens cannot exceed 100,000")
+        if self.timeout > 300:
+            raise AIProviderError("Timeout cannot exceed 300 seconds")
+        if self.max_tokens > 4000:
+            raise AIProviderError("Max tokens cannot exceed 4000")
         if len(self.model) > 100:
             raise AIProviderError("Model name too long")
     
     def _get_api_key(self) -> str:
-        """Get API key from environment with external secret support"""
-        api_key_env = self.config.get("api_key_env", f"{self.name.upper()}_API_KEY")
-        
-        # Check for external secret manager configuration
-        use_external_secrets = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_USE_EXTERNAL_SECRETS', 'false').lower() == 'true'
+        """Get API key from environment or external secret manager"""
+        # Check if external secrets are enabled
+        use_external_secrets = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_EXTERNAL_SECRETS_ENABLED', 'false').lower() == 'true'
         
         if use_external_secrets:
-            return self._get_external_secret(api_key_env)
+            return self._get_external_secret()
         
+        # Fallback to environment variable
+        api_key_env = self.config.get("api_key_env", f"{self.name.upper()}_API_KEY")
         api_key = os.environ.get(api_key_env)
         if not api_key:
             raise AIProviderError(f"API key not found in environment variable: {api_key_env}")
         
         return api_key
     
-    def _get_external_secret(self, secret_name: str) -> str:
+    def _get_external_secret(self) -> str:
         """Get API key from external secret manager"""
-        secret_config = json.loads(os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_REDACTION_SECRET_MANAGER_CONFIG', '{}'))
-        provider = secret_config.get('provider')
+        provider = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_EXTERNAL_SECRETS_PROVIDER')
         
         if provider == 'aws-secrets-manager':
-            return self._get_aws_secret(secret_name, secret_config)
+            return self._get_aws_secret()
         elif provider == 'hashicorp-vault':
-            return self._get_vault_secret(secret_name, secret_config)
-        elif provider == 'google-secret-manager':
-            return self._get_gcp_secret(secret_name, secret_config)
+            return self._get_vault_secret()
+        elif provider == 'gcp-secret-manager':
+            return self._get_gcp_secret()
         else:
             raise AIProviderError(f"Unsupported secret manager: {provider}")
     
-    def _get_aws_secret(self, secret_name: str, config: Dict) -> str:
+    def _get_aws_secret(self) -> str:
         """Get secret from AWS Secrets Manager"""
         try:
             import boto3
-            client = boto3.client('secretsmanager', region_name=config.get('region', 'us-east-1'))
-            response = client.get_secret_value(SecretId=config.get('secret_path', secret_name))
-            return response['SecretString']
+            from botocore.exceptions import ClientError
+            
+            region = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_EXTERNAL_SECRETS_REGION', 'us-east-1')
+            secret_path = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_EXTERNAL_SECRETS_SECRET_PATH')
+            
+            if not secret_path:
+                secret_path = f"buildkite/ai-error-analysis/{self.name}"
+            
+            client = boto3.client('secretsmanager', region_name=region)
+            response = client.get_secret_value(SecretId=secret_path)
+            
+            # Handle both string and JSON secrets
+            try:
+                secret_data = json.loads(response['SecretString'])
+                return secret_data.get('api_key') or secret_data.get('value')
+            except json.JSONDecodeError:
+                return response['SecretString']
+                
         except ImportError:
             raise AIProviderError("boto3 not installed for AWS Secrets Manager")
-        except Exception as e:
+        except ClientError as e:
             raise AIProviderError(f"Failed to get AWS secret: {e}")
     
-    def _get_vault_secret(self, secret_name: str, config: Dict) -> str:
+    def _get_vault_secret(self) -> str:
         """Get secret from HashiCorp Vault"""
         try:
-            vault_url = os.environ.get('VAULT_ADDR')
-            vault_token = os.environ.get('VAULT_TOKEN')
+            import subprocess
             
-            if not vault_url or not vault_token:
-                raise AIProviderError("VAULT_ADDR and VAULT_TOKEN must be set")
+            vault_url = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_EXTERNAL_SECRETS_VAULT_URL')
+            secret_path = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_EXTERNAL_SECRETS_SECRET_PATH')
             
-            secret_path = config.get('secret_path', f'secret/data/{secret_name}')
-            url = f"{vault_url}/v1/{secret_path}"
+            if not secret_path:
+                secret_path = f"secret/buildkite/ai-error-analysis/{self.name}"
             
-            headers = {'X-Vault-Token': vault_token}
-            req = urllib.request.Request(url, headers=headers)
+            result = subprocess.run(
+                ['vault', 'kv', 'get', '-format=json', secret_path],
+                capture_output=True, text=True, timeout=10
+            )
             
-            with urllib.request.urlopen(req, timeout=10) as response:
-                data = json.loads(response.read().decode())
-                return data['data']['data'][secret_name]
+            if result.returncode == 0:
+                vault_data = json.loads(result.stdout)
+                secret_data = vault_data.get('data', {}).get('data', {})
+                return secret_data.get('api_key') or secret_data.get('value')
+            else:
+                raise AIProviderError(f"Vault error: {result.stderr}")
                 
+        except subprocess.TimeoutExpired:
+            raise AIProviderError("Vault request timeout")
         except Exception as e:
             raise AIProviderError(f"Failed to get Vault secret: {e}")
     
-    def _get_gcp_secret(self, secret_name: str, config: Dict) -> str:
+    def _get_gcp_secret(self) -> str:
         """Get secret from Google Secret Manager"""
         try:
             from google.cloud import secretmanager
-            client = secretmanager.SecretManagerServiceClient()
             
-            project_id = config.get('project_id') or os.environ.get('GOOGLE_CLOUD_PROJECT')
+            project_id = os.environ.get('GOOGLE_CLOUD_PROJECT')
+            secret_path = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_EXTERNAL_SECRETS_SECRET_PATH')
+            
             if not project_id:
-                raise AIProviderError("Project ID required for Google Secret Manager")
+                raise AIProviderError("GOOGLE_CLOUD_PROJECT environment variable required")
             
-            secret_path = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
-            response = client.access_secret_version(request={"name": secret_path})
+            if not secret_path:
+                secret_path = f"ai-error-analysis-{self.name}-key"
+            
+            client = secretmanager.SecretManagerServiceClient()
+            name = f"projects/{project_id}/secrets/{secret_path}/versions/latest"
+            response = client.access_secret_version(request={"name": name})
+            
             return response.payload.data.decode('UTF-8')
             
         except ImportError:
@@ -145,11 +171,11 @@ class BaseAIProvider(ABC):
         pass
     
     def _make_request(self, url: str, headers: Dict[str, str], data: bytes) -> Dict[str, Any]:
-        """Make HTTP request to AI provider with enhanced security"""
+        """Make HTTP request to AI provider"""
         try:
-            # Security: Validate URL
-            if not url.startswith(('https://', 'http://localhost', 'http://127.0.0.1')):
-                raise AIProviderError("Only HTTPS URLs allowed in production")
+            # Security: Only allow HTTPS in production
+            if not url.startswith('https://'):
+                raise AIProviderError("Only HTTPS URLs allowed")
             
             req = urllib.request.Request(url, data=data, headers=headers)
             
@@ -158,10 +184,8 @@ class BaseAIProvider(ABC):
                 return json.loads(response_data)
                 
         except urllib.error.HTTPError as e:
-            error_body = e.read().decode('utf-8')
-            # Security: Don't log full error body which might contain sensitive info
-            sanitized_error = error_body[:200] + "..." if len(error_body) > 200 else error_body
-            raise AIProviderError(f"HTTP {e.code}: {sanitized_error}")
+            error_body = e.read().decode('utf-8')[:200]  # Limit error message
+            raise AIProviderError(f"HTTP {e.code}: {error_body}")
         except urllib.error.URLError as e:
             raise AIProviderError(f"URL Error: {e.reason}")
         except json.JSONDecodeError as e:
@@ -171,42 +195,26 @@ class BaseAIProvider(ABC):
 
 
 class OpenAIProvider(BaseAIProvider):
-    """OpenAI GPT provider with 2025 models"""
+    """OpenAI provider with correct 2025 model names"""
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
-        # 2025 Model mapping
-        model_mappings = {
-            'gpt-4o-mini': 'o4-mini',  # Backward compatibility
-            'gpt-4o': 'gpt-4.1',       # Backward compatibility
-        }
+        # Validate 2025 OpenAI models
+        valid_models = [
+            "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo",
+            "o1-preview", "o1-mini"  # Reasoning models
+        ]
         
-        # Update model name if using old naming
-        if self.model in model_mappings:
-            self.model = model_mappings[self.model]
+        if self.model not in valid_models:
+            raise AIProviderError(f"Invalid OpenAI model: {self.model}. Valid models: {valid_models}")
         
-        # Set appropriate endpoints
-        if self.use_batch_api:
-            self.endpoint = config.get("endpoint", "https://api.openai.com/v1/batches")
-        else:
-            self.endpoint = config.get("endpoint", "https://api.openai.com/v1/chat/completions")
-        
-        # Adjust timeout for reasoning models
-        if self.model in ['o4-mini', 'o4', 'o3-mini']:
-            self.timeout = max(self.timeout, 300)  # Reasoning models need more time
+        self.endpoint = config.get("endpoint", "https://api.openai.com/v1/chat/completions")
     
     def analyze_error(self, context: Dict[str, Any]) -> AIResponse:
-        """Analyze error using OpenAI GPT"""
+        """Analyze error using OpenAI"""
         start_time = time.time()
         
-        if self.use_batch_api:
-            return self._analyze_with_batch_api(context, start_time)
-        else:
-            return self._analyze_realtime(context, start_time)
-    
-    def _analyze_realtime(self, context: Dict[str, Any], start_time: float) -> AIResponse:
-        """Real-time analysis"""
         prompt = self._build_prompt(context)
         
         headers = {
@@ -214,7 +222,6 @@ class OpenAIProvider(BaseAIProvider):
             "Content-Type": "application/json"
         }
         
-        # Enhanced reasoning for o4 models
         messages = [
             {
                 "role": "system",
@@ -233,22 +240,12 @@ class OpenAIProvider(BaseAIProvider):
             "temperature": 0.1
         }
         
-        # Enable reasoning for o4 models
-        if self.model.startswith('o4'):
-            payload["reasoning"] = True
-        
         data = json.dumps(payload).encode('utf-8')
         response = self._make_request(self.endpoint, headers, data)
         
         try:
             content = response["choices"][0]["message"]["content"]
-            reasoning = response["choices"][0]["message"].get("reasoning", "")
-            
             analysis = self._parse_analysis(content)
-            
-            # Add reasoning for o4 models
-            if reasoning:
-                analysis["reasoning"] = reasoning[:500]  # Limit reasoning length
             
             return AIResponse(
                 provider="openai",
@@ -257,20 +254,13 @@ class OpenAIProvider(BaseAIProvider):
                 metadata={
                     "tokens_used": response.get("usage", {}).get("total_tokens", 0),
                     "analysis_time": f"{time.time() - start_time:.2f}s",
-                    "cached": False,
-                    "reasoning_tokens": response.get("usage", {}).get("reasoning_tokens", 0) if self.model.startswith('o4') else 0
+                    "cached": False
                 },
                 timestamp=datetime.utcnow().isoformat()
             )
             
         except (KeyError, IndexError) as e:
             raise AIProviderError(f"Invalid OpenAI response format: {e}")
-    
-    def _analyze_with_batch_api(self, context: Dict[str, Any], start_time: float) -> AIResponse:
-        """Batch API analysis (50% cost savings)"""
-        # For now, fall back to real-time. Batch API implementation would require
-        # job queuing and result polling which is complex for this use case
-        return self._analyze_realtime(context, start_time)
     
     def _build_prompt(self, context: Dict[str, Any]) -> str:
         """Build analysis prompt for OpenAI"""
@@ -283,16 +273,6 @@ class OpenAIProvider(BaseAIProvider):
             ""
         ]
         
-        # Add error patterns if available
-        error_patterns = context.get('error_info', {}).get('error_patterns', [])
-        if error_patterns:
-            prompt_parts.append("Detected Error Patterns:")
-            for pattern in error_patterns[:3]:  # Limit to top 3
-                pattern_type = pattern.get('pattern_type', 'Unknown') if isinstance(pattern, dict) else str(pattern)
-                pattern_message = pattern.get('message', '') if isinstance(pattern, dict) else ''
-                prompt_parts.append(f"- {pattern_type}: {pattern_message}")
-            prompt_parts.append("")
-        
         # Add log excerpt
         log_excerpt = context.get('log_excerpt', '')
         if log_excerpt:
@@ -304,23 +284,13 @@ class OpenAIProvider(BaseAIProvider):
                 ""
             ])
         
-        # Add context information
+        # Add build context
         build_info = context.get('build_info', {})
         if build_info:
             prompt_parts.extend([
                 "Build Context:",
                 f"- Pipeline: {build_info.get('pipeline_name', 'unknown')}",
                 f"- Branch: {context.get('git_info', {}).get('branch', 'unknown')}",
-                f"- Commit: {context.get('git_info', {}).get('commit', 'unknown')[:8]}",
-                ""
-            ])
-        
-        # Custom context from user
-        custom_context = context.get('custom_context', '')
-        if custom_context:
-            prompt_parts.extend([
-                "Additional Context:",
-                custom_context,
                 ""
             ])
         
@@ -331,7 +301,7 @@ class OpenAIProvider(BaseAIProvider):
             "3. Confidence level (0-100%)",
             "4. Error severity (low/medium/high)",
             "",
-            "Format your response as structured text that can be easily parsed."
+            "Format your response as structured text."
         ])
         
         return "\n".join(prompt_parts)
@@ -360,19 +330,16 @@ class OpenAIProvider(BaseAIProvider):
             if "root cause" in lower_line or "cause" in lower_line:
                 current_section = "root_cause"
                 continue
-            elif "suggested" in lower_line or "fix" in lower_line or "solution" in lower_line:
+            elif "fix" in lower_line or "solution" in lower_line:
                 current_section = "fixes"
                 continue
             elif "confidence" in lower_line:
-                current_section = "confidence"
-                # Extract confidence percentage
                 import re
                 confidence_match = re.search(r'(\d+)%?', line)
                 if confidence_match:
                     analysis["confidence"] = min(100, max(0, int(confidence_match.group(1))))
                 continue
             elif "severity" in lower_line:
-                current_section = "severity"
                 if "high" in lower_line:
                     analysis["severity"] = "high"
                 elif "low" in lower_line:
@@ -388,47 +355,38 @@ class OpenAIProvider(BaseAIProvider):
                 else:
                     analysis["root_cause"] = line
             elif current_section == "fixes":
-                # Remove bullet points and numbers
                 import re
                 clean_line = re.sub(r'^[\d\-\*\+]+\.?\s*', '', line)
                 if clean_line and len(clean_line) > 5:
                     analysis["suggested_fixes"].append(clean_line)
         
-        # Fallback: if no structured parsing worked, use the whole content
+        # Fallback if no structured parsing worked
         if not analysis["root_cause"] and not analysis["suggested_fixes"]:
-            analysis["root_cause"] = content[:500]  # First 500 chars
+            analysis["root_cause"] = content[:500]
             analysis["suggested_fixes"] = ["Review the complete analysis above", "Check recent code changes", "Verify configuration"]
         
-        # Ensure we have suggested fixes
         if not analysis["suggested_fixes"]:
             analysis["suggested_fixes"] = ["Check error logs for more details", "Verify dependencies and configuration", "Contact DevOps team if issue persists"]
         
         return analysis
 
 
-class ClaudeProvider(BaseAIProvider):
-    """Anthropic Claude provider with 2025 models"""
+class AnthropicProvider(BaseAIProvider):
+    """Anthropic Claude provider with correct 2025 model names"""
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
-        # 2025 Model mapping
-        model_mappings = {
-            'claude-3-haiku-20240307': 'claude-sonnet-4',
-            'claude-3-sonnet-20240229': 'claude-sonnet-4', 
-            'claude-3-opus-20240229': 'claude-opus-4',
-        }
+        # Validate 2025 Anthropic models
+        valid_models = [
+            "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022", 
+            "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"
+        ]
         
-        # Update model name if using old naming
-        if self.model in model_mappings:
-            self.model = model_mappings[self.model]
+        if self.model not in valid_models:
+            raise AIProviderError(f"Invalid Anthropic model: {self.model}. Valid models: {valid_models}")
         
         self.endpoint = config.get("endpoint", "https://api.anthropic.com/v1/messages")
-        
-        # Extended thinking mode for Opus 4
-        self.use_extended_thinking = self.model == 'claude-opus-4'
-        if self.use_extended_thinking:
-            self.timeout = max(self.timeout, 300)
     
     def analyze_error(self, context: Dict[str, Any]) -> AIResponse:
         """Analyze error using Claude"""
@@ -442,10 +400,6 @@ class ClaudeProvider(BaseAIProvider):
             "anthropic-version": "2023-06-01"
         }
         
-        # Enable extended thinking for Opus 4
-        if self.use_extended_thinking:
-            headers["anthropic-beta"] = "extended-thinking-2024-12-15"
-        
         payload = {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -457,39 +411,28 @@ class ClaudeProvider(BaseAIProvider):
             ]
         }
         
-        # Enable extended thinking
-        if self.use_extended_thinking:
-            payload["thinking"] = True
-        
         data = json.dumps(payload).encode('utf-8')
         response = self._make_request(self.endpoint, headers, data)
         
         try:
             content = response["content"][0]["text"]
-            thinking = response.get("thinking", "") if self.use_extended_thinking else ""
-            
             analysis = self._parse_analysis(content)
             
-            # Add thinking process for Opus 4
-            if thinking:
-                analysis["thinking_process"] = thinking[:500]  # Limit thinking length
-            
             return AIResponse(
-                provider="claude",
+                provider="anthropic",
                 model=self.model,
                 analysis=analysis,
                 metadata={
                     "tokens_used": response.get("usage", {}).get("output_tokens", 0),
                     "input_tokens": response.get("usage", {}).get("input_tokens", 0),
                     "analysis_time": f"{time.time() - start_time:.2f}s",
-                    "cached": False,
-                    "thinking_tokens": len(thinking.split()) if thinking else 0
+                    "cached": False
                 },
                 timestamp=datetime.utcnow().isoformat()
             )
             
         except (KeyError, IndexError) as e:
-            raise AIProviderError(f"Invalid Claude response format: {e}")
+            raise AIProviderError(f"Invalid Anthropic response format: {e}")
     
     def _build_prompt(self, context: Dict[str, Any]) -> str:
         """Build analysis prompt for Claude"""
@@ -501,28 +444,22 @@ class ClaudeProvider(BaseAIProvider):
 
 
 class GeminiProvider(BaseAIProvider):
-    """Google Gemini provider with 2025 models"""
+    """Google Gemini provider with correct 2025 model names"""
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         
-        # 2025 Model mapping
-        model_mappings = {
-            'gemini-1.5-flash': 'gemini-2.5-flash',
-            'gemini-1.5-pro': 'gemini-2.5-pro',
-        }
+        # Validate 2025 Gemini models
+        valid_models = [
+            "gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", 
+            "gemini-1.5-flash-8b"
+        ]
         
-        # Update model name if using old naming
-        if self.model in model_mappings:
-            self.model = model_mappings[self.model]
+        if self.model not in valid_models:
+            raise AIProviderError(f"Invalid Gemini model: {self.model}. Valid models: {valid_models}")
         
         base_url = config.get("endpoint", "https://generativelanguage.googleapis.com")
         self.endpoint = f"{base_url}/v1beta/models/{self.model}:generateContent"
-        
-        # Deep Think mode for Pro models
-        self.use_deep_think = 'pro' in self.model.lower()
-        if self.use_deep_think:
-            self.timeout = max(self.timeout, 300)
     
     def analyze_error(self, context: Dict[str, Any]) -> AIResponse:
         """Analyze error using Gemini"""
@@ -537,15 +474,6 @@ class GeminiProvider(BaseAIProvider):
         # Add API key to URL for Gemini
         url_with_key = f"{self.endpoint}?key={self.api_key}"
         
-        generation_config = {
-            "maxOutputTokens": self.max_tokens,
-            "temperature": 0.1
-        }
-        
-        # Enable Deep Think for Pro models
-        if self.use_deep_think:
-            generation_config["deepThink"] = True
-        
         payload = {
             "contents": [
                 {
@@ -556,25 +484,18 @@ class GeminiProvider(BaseAIProvider):
                     ]
                 }
             ],
-            "generationConfig": generation_config
+            "generationConfig": {
+                "maxOutputTokens": self.max_tokens,
+                "temperature": 0.1
+            }
         }
         
         data = json.dumps(payload).encode('utf-8')
         response = self._make_request(url_with_key, headers, data)
         
         try:
-            candidate = response["candidates"][0]
-            content = candidate["content"]["parts"][0]["text"]
-            
-            # Extract thinking process if available
-            thinking_metadata = candidate.get("thinkingMetadata", {})
-            thinking_process = thinking_metadata.get("thinking", "") if self.use_deep_think else ""
-            
+            content = response["candidates"][0]["content"]["parts"][0]["text"]
             analysis = self._parse_analysis(content)
-            
-            # Add thinking process for Pro models
-            if thinking_process:
-                analysis["thinking_process"] = thinking_process[:500]
             
             return AIResponse(
                 provider="gemini",
@@ -585,8 +506,7 @@ class GeminiProvider(BaseAIProvider):
                     "input_tokens": response.get("usageMetadata", {}).get("promptTokenCount", 0),
                     "output_tokens": response.get("usageMetadata", {}).get("candidatesTokenCount", 0),
                     "analysis_time": f"{time.time() - start_time:.2f}s",
-                    "cached": False,
-                    "thinking_tokens": len(thinking_process.split()) if thinking_process else 0
+                    "cached": False
                 },
                 timestamp=datetime.utcnow().isoformat()
             )
@@ -603,152 +523,115 @@ class GeminiProvider(BaseAIProvider):
         return self._parse_generic_analysis(content)
 
 
-# Mixin for common methods
-class ProviderMixin:
-    """Common methods for all providers"""
+# Common methods for all providers
+def _build_generic_prompt(context: Dict[str, Any]) -> str:
+    """Generic prompt builder for all providers"""
+    prompt_parts = [
+        "You are an expert DevOps engineer. Analyze this CI/CD build failure and provide actionable insights.",
+        "",
+        "FAILURE DETAILS:",
+        f"Exit Code: {context.get('error_info', {}).get('exit_code', 'unknown')}",
+        f"Error Category: {context.get('error_info', {}).get('error_category', 'unknown')}",
+        f"Command: {context.get('error_info', {}).get('command', 'unknown')}",
+        ""
+    ]
     
-    def _build_generic_prompt(self, context: Dict[str, Any]) -> str:
-        """Generic prompt builder"""
-        prompt_parts = [
-            "You are an expert DevOps engineer. Analyze this CI/CD build failure and provide actionable insights.",
-            "",
-            "FAILURE DETAILS:",
-            f"Exit Code: {context.get('error_info', {}).get('exit_code', 'unknown')}",
-            f"Error Category: {context.get('error_info', {}).get('error_category', 'unknown')}",
-            f"Command: {context.get('error_info', {}).get('command', 'unknown')}",
-            ""
-        ]
-        
-        # Add error patterns
-        error_patterns = context.get('error_info', {}).get('error_patterns', [])
-        if error_patterns:
-            prompt_parts.append("DETECTED PATTERNS:")
-            for i, pattern in enumerate(error_patterns[:5], 1):
-                if isinstance(pattern, dict):
-                    pattern_type = pattern.get('pattern_type', 'Unknown')
-                    message = pattern.get('message', '')
-                    prompt_parts.append(f"{i}. {pattern_type}: {message}")
-                else:
-                    prompt_parts.append(f"{i}. {str(pattern)}")
-            prompt_parts.append("")
-        
-        # Add log excerpt
-        log_excerpt = context.get('log_excerpt', '')
-        if log_excerpt:
-            prompt_parts.extend([
-                "LOG EXCERPT:",
-                "```",
-                log_excerpt[:3000],  # Increased limit for 2025 models
-                "```",
-                ""
-            ])
-        
-        # Add build context
-        build_info = context.get('build_info', {})
-        if build_info:
-            prompt_parts.extend([
-                "BUILD CONTEXT:",
-                f"Pipeline: {build_info.get('pipeline_name', 'unknown')}",
-                f"Branch: {context.get('git_info', {}).get('branch', 'unknown')}",
-                f"Commit: {context.get('git_info', {}).get('commit', 'unknown')[:8]}",
-                f"Step: {build_info.get('step_key', 'unknown')}",
-                ""
-            ])
-        
-        # Add custom context
-        custom_context = context.get('custom_context', '')
-        if custom_context:
-            prompt_parts.extend([
-                "ADDITIONAL CONTEXT:",
-                custom_context,
-                ""
-            ])
-        
-        # Add analysis request
+    # Add log excerpt
+    log_excerpt = context.get('log_excerpt', '')
+    if log_excerpt:
         prompt_parts.extend([
-            "ANALYSIS REQUEST:",
-            "Provide a structured analysis with:",
-            "1. ROOT CAUSE: Clear explanation of what went wrong",
-            "2. SUGGESTED FIXES: 3-5 specific, actionable solutions",
-            "3. CONFIDENCE: Your confidence level (0-100%)",
-            "4. SEVERITY: Impact level (low/medium/high)",
-            "",
-            "Keep your response concise and focused on actionable solutions."
+            "LOG EXCERPT:",
+            "```",
+            log_excerpt[:2000],
+            "```",
+            ""
         ])
-        
-        return "\n".join(prompt_parts)
     
-    def _parse_generic_analysis(self, content: str) -> Dict[str, Any]:
-        """Generic response parser"""
-        import re
-        
-        analysis = {
-            "root_cause": "",
-            "suggested_fixes": [],
-            "confidence": 75,
-            "severity": "medium",
-            "error_type": "unknown"
-        }
-        
-        # Extract sections using regex
-        sections = {
-            "root_cause": r"(?i)(?:root\s+cause|cause)[:\s]*(.+?)(?=(?:suggested|fix|confidence|severity|$))",
-            "confidence": r"(?i)confidence[:\s]*(\d+)%?",
-            "severity": r"(?i)severity[:\s]*(low|medium|high)"
-        }
-        
-        for section, pattern in sections.items():
-            match = re.search(pattern, content, re.DOTALL)
-            if match:
-                if section == "root_cause":
-                    analysis[section] = match.group(1).strip()[:500]  # Limit length
-                elif section == "confidence":
-                    analysis[section] = min(100, max(0, int(match.group(1))))
-                elif section == "severity":
-                    analysis[section] = match.group(1).lower()
-        
-        # Extract suggested fixes
-        fixes_pattern = r"(?i)(?:suggested\s+)?fix(?:es)?[:\s]*(.+?)(?=(?:confidence|severity|$))"
-        fixes_match = re.search(fixes_pattern, content, re.DOTALL)
-        
-        if fixes_match:
-            fixes_text = fixes_match.group(1)
-            # Split on numbered lists, bullet points, or new lines
-            fix_items = re.split(r'\n(?=\d+\.|\-|\*)', fixes_text)
-            
-            for item in fix_items:
-                clean_item = re.sub(r'^\d+\.?\s*[\-\*]?\s*', '', item.strip())
-                if clean_item and len(clean_item) > 10:  # Minimum length filter
-                    analysis["suggested_fixes"].append(clean_item[:200])  # Limit length
-        
-        # Fallback for fixes
-        if not analysis["suggested_fixes"]:
-            # Look for any numbered or bulleted lists
-            list_items = re.findall(r'(?:^|\n)(?:\d+\.|\-|\*)\s*(.+)', content)
-            analysis["suggested_fixes"] = [item.strip()[:200] for item in list_items if len(item.strip()) > 10][:5]
-        
-        # Final fallback
-        if not analysis["root_cause"]:
-            analysis["root_cause"] = content[:300] + "..." if len(content) > 300 else content
-        
-        if not analysis["suggested_fixes"]:
-            analysis["suggested_fixes"] = [
-                "Review the error logs carefully",
-                "Check recent changes to the codebase", 
-                "Verify configuration and dependencies",
-                "Contact the DevOps team if the issue persists"
-            ]
-        
-        return analysis
+    # Add build context
+    build_info = context.get('build_info', {})
+    if build_info:
+        prompt_parts.extend([
+            "BUILD CONTEXT:",
+            f"Pipeline: {build_info.get('pipeline_name', 'unknown')}",
+            f"Branch: {context.get('git_info', {}).get('branch', 'unknown')}",
+            ""
+        ])
+    
+    prompt_parts.extend([
+        "ANALYSIS REQUEST:",
+        "Provide a structured analysis with:",
+        "1. ROOT CAUSE: Clear explanation of what went wrong",
+        "2. SUGGESTED FIXES: 3-5 specific, actionable solutions",
+        "3. CONFIDENCE: Your confidence level (0-100%)",
+        "4. SEVERITY: Impact level (low/medium/high)",
+        "",
+        "Keep your response concise and focused on actionable solutions."
+    ])
+    
+    return "\n".join(prompt_parts)
 
 
-# Add mixin methods to providers
-for provider_class in [OpenAIProvider, ClaudeProvider, GeminiProvider]:
-    for method_name in dir(ProviderMixin):
-        if not method_name.startswith('_') or method_name.startswith('_build_') or method_name.startswith('_parse_'):
-            method = getattr(ProviderMixin, method_name)
-            if callable(method):
-                setattr(provider_class, method_name, method)
+def _parse_generic_analysis(content: str) -> Dict[str, Any]:
+    """Generic response parser for all providers"""
+    import re
+    
+    analysis = {
+        "root_cause": "",
+        "suggested_fixes": [],
+        "confidence": 75,
+        "severity": "medium",
+        "error_type": "unknown"
+    }
+    
+    # Extract sections using regex
+    sections = {
+        "root_cause": r"(?i)(?:root\s+cause|cause)[:\s]*(.+?)(?=(?:suggested|fix|confidence|severity|$))",
+        "confidence": r"(?i)confidence[:\s]*(\d+)%?",
+        "severity": r"(?i)severity[:\s]*(low|medium|high)"
+    }
+    
+    for section, pattern in sections.items():
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            if section == "root_cause":
+                analysis[section] = match.group(1).strip()[:500]
+            elif section == "confidence":
+                analysis[section] = min(100, max(0, int(match.group(1))))
+            elif section == "severity":
+                analysis[section] = match.group(1).lower()
+    
+    # Extract suggested fixes
+    fixes_pattern = r"(?i)(?:suggested\s+)?fix(?:es)?[:\s]*(.+?)(?=(?:confidence|severity|$))"
+    fixes_match = re.search(fixes_pattern, content, re.DOTALL)
+    
+    if fixes_match:
+        fixes_text = fixes_match.group(1)
+        fix_items = re.split(r'\n(?=\d+\.|\-|\*)', fixes_text)
+        
+        for item in fix_items:
+            clean_item = re.sub(r'^\d+\.?\s*[\-\*]?\s*', '', item.strip())
+            if clean_item and len(clean_item) > 10:
+                analysis["suggested_fixes"].append(clean_item[:200])
+    
+    # Fallback
+    if not analysis["root_cause"]:
+        analysis["root_cause"] = content[:300] + "..." if len(content) > 300 else content
+    
+    if not analysis["suggested_fixes"]:
+        analysis["suggested_fixes"] = [
+            "Review the error logs carefully",
+            "Check recent changes to the codebase", 
+            "Verify configuration and dependencies",
+            "Contact the DevOps team if the issue persists"
+        ]
+    
+    return analysis
+
+
+# Add common methods to provider classes
+for provider_class in [OpenAIProvider, AnthropicProvider, GeminiProvider]:
+    provider_class._build_generic_prompt = _build_generic_prompt
+    provider_class._parse_generic_analysis = _parse_generic_analysis
 
 
 class AIProviderManager:
@@ -757,7 +640,6 @@ class AIProviderManager:
     def __init__(self, providers_config: List[Dict[str, Any]], fallback_strategy: str = "priority"):
         self.providers = []
         self.fallback_strategy = fallback_strategy
-        self.rate_limiter = self._setup_rate_limiter()
         
         # Initialize providers
         for config in providers_config:
@@ -768,33 +650,6 @@ class AIProviderManager:
         if not self.providers:
             raise AIProviderError("No valid AI providers configured")
     
-    def _setup_rate_limiter(self) -> Dict[str, Any]:
-        """Setup rate limiting"""
-        return {
-            "requests_per_minute": int(os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_RATE_LIMIT_REQUESTS_PER_MINUTE', '30')),
-            "burst_limit": int(os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_RATE_LIMIT_BURST_LIMIT', '10')),
-            "request_times": []
-        }
-    
-    def _check_rate_limit(self) -> bool:
-        """Check if we're within rate limits"""
-        now = time.time()
-        minute_ago = now - 60
-        
-        # Remove old requests
-        self.rate_limiter["request_times"] = [
-            t for t in self.rate_limiter["request_times"] if t > minute_ago
-        ]
-        
-        # Check limits
-        recent_requests = len(self.rate_limiter["request_times"])
-        if recent_requests >= self.rate_limiter["requests_per_minute"]:
-            return False
-        
-        # Add current request
-        self.rate_limiter["request_times"].append(now)
-        return True
-    
     def _create_provider(self, config: Dict[str, Any]) -> Optional[BaseAIProvider]:
         """Create provider instance from configuration"""
         provider_name = config.get("name", "").lower()
@@ -802,8 +657,8 @@ class AIProviderManager:
         try:
             if provider_name == "openai":
                 return OpenAIProvider(config)
-            elif provider_name == "claude":
-                return ClaudeProvider(config)
+            elif provider_name == "anthropic":
+                return AnthropicProvider(config)
             elif provider_name == "gemini":
                 return GeminiProvider(config)
             else:
@@ -815,13 +670,9 @@ class AIProviderManager:
     
     def analyze_error(self, context: Dict[str, Any]) -> AIResponse:
         """Analyze error using configured providers with fallback"""
-        # Check rate limits
-        if not self._check_rate_limit():
-            raise AIProviderError("Rate limit exceeded")
-        
         last_error = None
         
-        for i, provider in enumerate(self.providers):
+        for provider in self.providers:
             try:
                 print(f"Attempting analysis with {provider.name} ({provider.model})", file=sys.stderr)
                 response = provider.analyze_error(context)
@@ -835,20 +686,9 @@ class AIProviderManager:
                 if self.fallback_strategy == "fail_fast":
                     break
                 
-                # Continue to next provider
                 continue
         
-        # If all providers failed
         raise AIProviderError(f"All AI providers failed. Last error: {last_error}")
-
-
-def load_context_from_file(context_file: str) -> Dict[str, Any]:
-    """Load analysis context from JSON file"""
-    try:
-        with open(context_file, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        raise AIProviderError(f"Failed to load context file {context_file}: {e}")
 
 
 def main():
@@ -861,11 +701,12 @@ def main():
     
     try:
         # Load context
-        context = load_context_from_file(context_file)
+        with open(context_file, 'r') as f:
+            context = json.load(f)
         
         # Load provider configuration
         providers_config_str = os.environ.get('BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_AI_PROVIDERS', 
-                                             '[{"name":"openai","model":"o4-mini"}]')
+                                             '[{"name":"openai","model":"gpt-4o-mini"}]')
         providers_config = json.loads(providers_config_str)
         
         if not isinstance(providers_config, list):

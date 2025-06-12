@@ -2,135 +2,79 @@
 
 🤖 Automatically analyze build failures using state-of-the-art AI models to provide actionable insights and suggestions.
 
-This plugin integrates with multiple AI providers (OpenAI GPT-4.1, Claude Opus 4, Gemini 2.5) to analyze build errors and provide intelligent suggestions for resolution, helping developers fix issues faster and learn from failures.
-
 [![Build Status](https://badge.buildkite.com/your-pipeline-badge.svg)](https://buildkite.com/your-org/your-pipeline)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-### Supported Providers (2025 Models)
+## 🚨 Critical Security Notice
 
-| Provider | Models | API Key Env | Notes |
-|----------|--------|-------------|-------|
-| **OpenAI** | `gpt-4.1`, `o4-mini`, `gpt-4o-mini` (legacy) | `OPENAI_API_KEY` | Latest reasoning models, 1M context |
-| **Claude** | `claude-opus-4`, `claude-sonnet-4` | `ANTHROPIC_API_KEY` | Extended thinking, excellent reasoning |
-| **Gemini** | `gemini-2.5-pro`, `gemini-2.5-flash` | `GOOGLE_API_KEY` | Deep Think mode, multimodal support |
+**NEVER store API keys in pipeline configuration.** This plugin requires external secret management for production use. API keys stored in pipeline settings are exposed via the Buildkite API and logs.
 
-## 🚨 Security Notice
+## Supported AI Providers (2025 Models)
 
-**CRITICAL**: Never store API keys in Buildkite pipeline configuration. Use external secret management services like AWS Secrets Manager, HashiCorp Vault, or Google Secret Manager. API keys in pipeline settings are exposed via the API and logs.
-
-## Features
-
-### 🔍 **Intelligent Error Detection**
-- Automatic pattern recognition for compilation errors, test failures, dependency issues, and more
-- Context-aware analysis using pipeline metadata and git information  
-- Support for multiple error categories with confidence scoring
-
-### 🤖 **Latest AI Provider Support**
-- **OpenAI GPT-4.1** and **o4-mini** (2025 models)
-- **Anthropic Claude Opus 4** and **Sonnet 4** with extended thinking
-- **Google Gemini 2.5 Pro** and **2.5 Flash** with multimodal capabilities
-- Automatic fallback between providers with exponential backoff
-- Batch API support for 50% cost savings on non-critical analysis
-
-### 🔒 **Enterprise Security**
-- External secret management integration (AWS, Vault, GCP)
-- Comprehensive log sanitization before AI analysis
-- Automatic redaction of secrets, tokens, passwords, and sensitive data
-- Container security with non-root execution and capability dropping
-- Command injection prevention and input validation
-
-### 📊 **Rich Output & Reporting**
-- Beautiful HTML annotations in Buildkite with confidence scores
-- Structured JSON reports for programmatic consumption
-- Markdown reports for documentation
-- Optional artifact generation for detailed analysis
-
-### ⚡ **Performance Optimized**
-- Intelligent caching to avoid redundant API calls (54% build time reduction)
-- Configurable timeouts (60s standard, 300s for reasoning models)
-- Async execution options to not block builds
-- Smart context truncation to fit AI model limits
-- Batch processing for cost optimization
-
-### 🛠 **Flexible Configuration**
-- Zero-config defaults that work out of the box
-- Extensive customization options for enterprise users
-- Branch-specific analysis controls
-- Custom prompts for different error types
+| Provider | Models | Authentication | Notes |
+|----------|--------|----------------|-------|
+| **OpenAI** | `GPT-4o`, `GPT-4o mini`, `GPT-4o nano` | Bearer token | Latest models with improved reasoning |
+| **Anthropic** | `Claude 3.5 Haiku`, `Claude Sonnet 4`, `Claude Opus 4` | x-api-key header | Extended thinking mode available |
+| **Google** | `Gemini 2.0 Flash`, `Gemini 2.5 Pro` | API key parameter | Deep Think mode for complex analysis |
 
 ## Quick Start
 
-### 1. Add to Your Pipeline
+### 1. External Secret Management (Required)
 
+**AWS Secrets Manager (Recommended)**
 ```yaml
 steps:
   - label: "Tests"
     command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0: ~
+      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+          provider: openai
+          model: "GPT-4o mini"
+          secret_source:
+            type: aws_secrets_manager
+            secret_name: buildkite/ai-error-analysis/openai-key
+            region: us-east-1
 ```
 
-### 2. Configure Secret Management (Required)
-
-**Option A: AWS Secrets Manager**
+**HashiCorp Vault**
 ```yaml
 steps:
-  - command: "npm test"
+  - label: "Tests" 
+    command: "npm test"
     plugins:
       - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          ai_providers:
-            - name: openai
-              model: gpt-4.1
-              secret_source:
-                type: aws_secrets_manager
-                name: buildkite/openai-api-key
-                region: us-east-1
+          provider: anthropic
+          model: "Claude 3.5 Haiku"
+          secret_source:
+            type: vault
+            vault_path: secret/buildkite/anthropic-key
+            vault_role: buildkite-ai-analysis
 ```
 
-**Option B: HashiCorp Vault**
+**Google Secret Manager**
 ```yaml
 steps:
-  - command: "npm test"
+  - label: "Tests"
+    command: "npm test"
     plugins:
       - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          ai_providers:
-            - name: openai
-              model: gpt-4.1
-              secret_source:
-                type: vault
-                vault_path: secret/buildkite/openai-api-key
+          provider: gemini
+          model: "Gemini 2.0 Flash"
+          secret_source:
+            type: gcp_secret_manager
+            project_id: your-project
+            secret_name: buildkite-gemini-key
 ```
 
-**Option C: Environment Variable (Less Secure)**
+### 2. Environment Variables (Less Secure Fallback)
+
+⚠️ **Not recommended for production**
+
 ```bash
-# Set in your agent environment, NOT in pipeline
+# Set in agent environment, NOT in pipeline
+export BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_API_KEY_ENV="OPENAI_API_KEY"
 export OPENAI_API_KEY="your-api-key-here"
 ```
-
-### 3. Watch the Magic ✨
-
-When your build fails, the plugin will automatically:
-1. Detect the error patterns
-2. Gather relevant context
-3. Sanitize logs for security
-4. Analyze with AI
-5. Create a beautiful annotation with suggestions
-
-## Environment Variables
-
-### Critical Security Note
-Environment variables follow the pattern: `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_<PROPERTY>`
-
-**The plugin name comes from the repository folder name**, not the `plugin.yml` name field. For a plugin at `your-org/ai-error-analysis-buildkite-plugin`, variables use `AI_ERROR_ANALYSIS`.
-
-### Examples
-
-| Configuration | Environment Variable |
-|---------------|---------------------|
-| `trigger: auto` | `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_TRIGGER=auto` |
-| `performance.timeout: 120` | `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PERFORMANCE_TIMEOUT=120` |
-| `advanced.debug_mode: true` | `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_DEBUG_MODE=true` |
 
 ## Configuration
 
@@ -138,471 +82,348 @@ Environment variables follow the pattern: `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_<P
 
 ```yaml
 steps:
-  - command: "npm test"
+  - command: "pytest tests/"
     plugins:
       - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          # AI Provider Configuration
-          ai_providers:
-            - name: openai
-              model: gpt-4.1
-              secret_source:
-                type: aws_secrets_manager
-                name: buildkite/openai-api-key
-          
-          # When to trigger analysis
-          trigger: auto  # auto, explicit, always
-          
-          # Error conditions
-          conditions:
-            exit_status: [1, 2, 125, 126, 127, 128, 130]
-            branches: ["main", "develop"]  # empty = all branches
+          provider: openai
+          model: "GPT-4o mini"
+          max_tokens: 1000
+          enable_caching: true
+          secret_source:
+            type: aws_secrets_manager
+            secret_name: buildkite/openai-key
 ```
 
-### Advanced Configuration with Security
-
-```yaml
-steps:
-  - command: "npm test"
-    plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          # Multiple AI providers with fallback
-          ai_providers:
-            - name: openai
-              model: gpt-4.1
-              secret_source:
-                type: aws_secrets_manager
-                name: buildkite/openai-api-key
-                region: us-east-1
-              max_tokens: 1000
-              timeout: 60
-              use_batch_api: false  # Set true for non-critical analysis
-            - name: claude
-              model: claude-opus-4
-              secret_source:
-                type: vault
-                vault_path: secret/buildkite/claude-api-key
-              max_tokens: 1000
-              timeout: 300  # Extended for reasoning models
-          
-          # Fallback strategy with retry configuration
-          performance:
-            fallback_strategy: priority
-            timeout: 120
-            async_execution: false
-            cache_enabled: true
-            cache_ttl: 3600
-            retry_config:
-              max_attempts: 3
-              initial_delay: 2
-              max_delay: 60
-          
-          # Context gathering
-          context:
-            log_lines: 500
-            include_environment: true
-            include_pipeline_info: true
-            include_git_info: true
-            custom_context: "Additional context for AI analysis"
-          
-          # Enhanced Security & Privacy
-          redaction:
-            enable_builtin_patterns: true
-            custom_patterns:
-              - "(?i)company[_-]?secret[\\s]*[=:]+[\\s]*[^\\s]+"
-              - "(?i)internal[_-]?token[\\s]*[=:]+[\\s]*[^\\s]+"
-            redact_file_paths: true
-            redact_urls: true
-          
-          # Output configuration  
-          output:
-            annotation_style: error
-            annotation_context: ai-error-analysis
-            include_confidence: true
-            save_as_artifact: true
-            artifact_path: ai-analysis-report.json
-          
-          # Advanced security options
-          advanced:
-            debug_mode: false
-            dry_run: false
-            input_validation:
-              enabled: true
-              max_log_size_mb: 50
-              allowed_commands: []  # Whitelist specific commands
-            security:
-              enable_command_validation: true
-              container_security:
-                run_as_non_root: true
-                drop_capabilities: ["ALL"]
-                add_capabilities: []
-                no_new_privileges: true
-            custom_prompts:
-              compilation_error: "Focus on compilation issues and syntax errors"
-              test_failure: "Analyze test failures and assertion errors"
-              deployment_error: "Focus on deployment and infrastructure issues"
-              security_error: "Analyze security-related errors with special attention"
-```
-
-## AI Provider Configuration
-
-### OpenAI Setup (2025 Models)
-
-```yaml
-ai_providers:
-  - name: openai
-    model: gpt-4.1  # or gpt-4o-mini, o4-mini
-    secret_source:
-      type: aws_secrets_manager
-      name: buildkite/openai-api-key
-    max_tokens: 1000
-    timeout: 60
-    use_batch_api: false  # Enable for 50% cost savings on non-critical analysis
-```
-
-**Available Models:**
-- `gpt-4.1`: Latest flagship model with 1M token context ($2.50/$10 per 1M tokens)
-- `gpt-4o-mini`: Cost-effective general purpose ($0.15/$0.60 per 1M tokens)
-- `o4-mini`: Reasoning model for complex analysis ($0.15/$0.60 per 1M tokens)
-
-### Anthropic Claude Setup (2025 Models)
-
-```yaml
-ai_providers:
-  - name: claude
-    model: claude-opus-4  # or claude-sonnet-4
-    secret_source:
-      type: vault
-      vault_path: secret/buildkite/claude-api-key
-    max_tokens: 1000
-    timeout: 300  # Extended for thinking capabilities
-    use_batch_api: true  # Recommended for 50% savings
-```
-
-**Available Models:**
-- `claude-opus-4`: Latest flagship with extended thinking ($15/$75 per 1M tokens)
-- `claude-sonnet-4`: Balanced performance and cost ($3/$15 per 1M tokens)
-
-### Google Gemini Setup (2025 Models)
-
-```yaml
-ai_providers:
-  - name: gemini
-    model: gemini-2.5-pro  # or gemini-2.5-flash
-    secret_source:
-      type: gcp_secret_manager
-      name: buildkite-gemini-api-key
-    max_tokens: 1000
-    timeout: 60
-```
-
-**Available Models:**
-- `gemini-2.5-pro`: Flagship model with Deep Think capability
-- `gemini-2.5-flash`: Fast and cost-effective (64% price reduction in 2025)
-
-## Examples
-
-### Zero Configuration (Recommended)
-
-Just add the plugin and configure secret management:
-
-```yaml
-steps:
-  - command: "make test"
-    plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          ai_providers:
-            - name: openai
-              model: gpt-4o-mini
-              secret_source:
-                type: aws_secrets_manager
-                name: buildkite/openai-api-key
-```
-
-### Branch-Specific Analysis
-
-Only analyze failures on important branches:
-
-```yaml
-steps:
-  - command: "npm test"
-    plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          conditions:
-            branches: ["main", "develop", "release/*"]
-          ai_providers:
-            - name: openai
-              model: gpt-4.1
-              secret_source:
-                type: aws_secrets_manager
-                name: buildkite/openai-api-key
-```
-
-### Cost-Optimized Configuration
-
-Use batch APIs and efficient models:
+### Advanced Configuration
 
 ```yaml
 steps:
   - command: "cargo test"
     plugins:
       - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          ai_providers:
-            - name: gemini
-              model: gemini-2.5-flash  # Most cost-effective
-              use_batch_api: true
-            - name: openai  
-              model: gpt-4o-mini       # Fallback
-              use_batch_api: true
+          provider: anthropic
+          model: "Claude Sonnet 4"
+          max_tokens: 2000
+          enable_caching: true
+          temperature: 0.1
+          
+          # External secret management
+          secret_source:
+            type: vault
+            vault_path: secret/buildkite/claude-key
+            vault_addr: https://vault.company.com
+            vault_role: buildkite-ai
+          
+          # Context configuration
+          context:
+            include_env_vars: false
+            include_git_info: true
+            max_log_lines: 500
+            custom_context: "Rust application with async/await patterns"
+          
+          # Output configuration
+          output:
+            style: error
+            include_confidence: true
+            save_artifact: true
+            artifact_path: "reports/ai-analysis.json"
+          
+          # Performance tuning
           performance:
-            fallback_strategy: priority
-            cache_enabled: true
-            cache_ttl: 7200  # Longer caching
+            timeout_seconds: 120
+            retry_attempts: 3
+            rate_limit_rpm: 30
+          
+          # Security settings
+          security:
+            sanitize_logs: true
+            redact_secrets: true
+            allowed_domains: ["api.anthropic.com"]
 ```
 
-### Enterprise Security Configuration
+## Environment Variables
 
-Maximum security for sensitive environments:
+Environment variables follow the pattern: `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_<PROPERTY>`
 
+⚠️ **Critical**: The plugin name comes from the repository folder name, not the plugin.yml name field.
+
+### Examples
+
+| Configuration | Environment Variable |
+|---------------|---------------------|
+| `provider: openai` | `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER=openai` |
+| `max_tokens: 1500` | `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MAX_TOKENS=1500` |
+| `enable_caching: false` | `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ENABLE_CACHING=false` |
+
+## AI Provider Setup
+
+### OpenAI Configuration
+
+```yaml
+provider: openai
+model: "GPT-4o mini"  # or "GPT-4o", "GPT-4o nano"
+secret_source:
+  type: aws_secrets_manager
+  secret_name: buildkite/openai-key
+  region: us-east-1
+max_tokens: 1000
+temperature: 0.1
+```
+
+**Available Models (2025)**:
+- `GPT-4o`: Latest flagship model ($3/$10 per 1M tokens)
+- `GPT-4o mini`: Cost-effective option ($0.15/$0.60 per 1M tokens)  
+- `GPT-4o nano`: Ultra-fast responses ($0.05/$0.20 per 1M tokens)
+
+### Anthropic Configuration
+
+```yaml
+provider: anthropic
+model: "Claude 3.5 Haiku"  # or "Claude Sonnet 4", "Claude Opus 4"
+secret_source:
+  type: vault
+  vault_path: secret/buildkite/claude-key
+  vault_role: buildkite-ai
+max_tokens: 1000
+enable_thinking_mode: true  # For Opus 4
+```
+
+**Available Models (2025)**:
+- `Claude Opus 4`: Flagship with extended thinking ($15/$75 per 1M tokens)
+- `Claude Sonnet 4`: Balanced performance ($3/$15 per 1M tokens)
+- `Claude 3.5 Haiku`: Fast and cost-effective ($0.25/$1.25 per 1M tokens)
+
+### Google Gemini Configuration
+
+```yaml
+provider: gemini
+model: "Gemini 2.0 Flash"  # or "Gemini 2.5 Pro"
+secret_source:
+  type: gcp_secret_manager
+  project_id: your-project
+  secret_name: gemini-api-key
+max_tokens: 1000
+enable_deep_think: true  # For Pro models
+```
+
+**Available Models (2025)**:
+- `Gemini 2.5 Pro`: Premium with Deep Think capability
+- `Gemini 2.0 Flash`: Optimized for speed and cost
+
+## Security Features
+
+### Automatic Log Sanitization
+
+The plugin automatically removes sensitive information before sending to AI:
+
+- **API Keys**: `sk-*`, `AIza*`, bearer tokens
+- **Secrets**: Environment variables containing `SECRET`, `TOKEN`, `KEY`, `PASSWORD`
+- **URLs**: Credentials in database URLs and webhook endpoints
+- **SSH Keys**: Private key blocks
+- **Personal Data**: Email addresses, file paths with usernames
+
+### Container Security (2025 Standards)
+
+```yaml
+security:
+  container:
+    run_as_non_root: true
+    user_id: 1000
+    group_id: 1000
+    read_only_root_fs: true
+    drop_capabilities: ["ALL"]
+    security_opts: ["no-new-privileges:true"]
+  
+  network:
+    allowed_domains: 
+      - "api.openai.com"
+      - "api.anthropic.com" 
+      - "generativelanguage.googleapis.com"
+```
+
+### External Secret Management Examples
+
+**AWS Secrets Manager with IAM Role**
+```bash
+# hooks/environment
+export OPENAI_API_KEY=$(aws secretsmanager get-secret-value \
+  --secret-id buildkite/ai-error-analysis/openai \
+  --query SecretString --output text \
+  --region us-east-1)
+```
+
+**HashiCorp Vault with AppRole**
+```bash
+# hooks/environment  
+export VAULT_TOKEN=$(vault write -field=token \
+  auth/approle/login \
+  role_id="$VAULT_ROLE_ID" \
+  secret_id="$VAULT_SECRET_ID")
+
+export ANTHROPIC_API_KEY=$(vault kv get \
+  -mount=secret -field=api_key \
+  buildkite/anthropic)
+```
+
+## Examples
+
+### Zero Configuration
+```yaml
+steps:
+  - command: "make test"
+    plugins:
+      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+          provider: openai
+          secret_source:
+            type: aws_secrets_manager
+            secret_name: buildkite/openai-key
+```
+
+### Multi-Provider Fallback
+```yaml
+steps:
+  - command: "npm test"
+    plugins:
+      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+          providers:
+            - provider: openai
+              model: "GPT-4o mini"
+              secret_source:
+                type: aws_secrets_manager
+                secret_name: buildkite/openai-key
+            - provider: anthropic  
+              model: "Claude 3.5 Haiku"
+              secret_source:
+                type: vault
+                vault_path: secret/buildkite/claude-key
+          fallback_strategy: priority
+```
+
+### Cost-Optimized Configuration
 ```yaml
 steps:
   - command: "pytest"
     plugins:
       - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          ai_providers:
-            - name: claude
-              model: claude-sonnet-4
-              secret_source:
-                type: vault
-                vault_path: secret/buildkite/claude-api-key
-          
-          redaction:
-            enable_builtin_patterns: true
-            custom_patterns:
-              # Company-specific secrets
-              - "(?i)acmecorp[_-]?api[_-]?key[\\s]*[=:]+[\\s]*[^\\s]+"
-              - "(?i)internal[_-]?webhook[\\s]*[=:]+[\\s]*[^\\s]+"
-              
-              # Database connections
-              - "postgresql://[^\\s]+"
-              - "mongodb://[^\\s]+"
-              - "redis://[^\\s]+"
-          
-          advanced:
-            input_validation:
-              enabled: true
-              max_log_size_mb: 25
-              allowed_commands: ["npm", "mvn", "gradle", "python"]
-            security:
-              enable_command_validation: true
-              container_security:
-                run_as_non_root: true
-                drop_capabilities: ["ALL"]
-                no_new_privileges: true
+          provider: gemini
+          model: "Gemini 2.0 Flash"  # Most cost-effective
+          max_tokens: 500
+          enable_caching: true
+          cache_ttl: 3600
+          secret_source:
+            type: gcp_secret_manager
+            secret_name: gemini-key
 ```
 
-### Async Analysis
+## Cost Optimization
 
-Run analysis in background to not block builds:
+### Approximate Costs (2025 Pricing)
 
-```yaml
-steps:
-  - command: "docker build ."
-    plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
-          performance:
-            async_execution: true
-            timeout: 300  # Longer timeout for complex analysis
-          ai_providers:
-            - name: openai
-              model: gpt-4.1
-              secret_source:
-                type: aws_secrets_manager
-                name: buildkite/openai-api-key
-```
+| Provider | Model | ~Cost/Analysis | Best For |
+|----------|-------|---------------|----------|
+| Google | Gemini 2.0 Flash | $0.001-0.003 | High volume, cost-sensitive |
+| OpenAI | GPT-4o nano | $0.002-0.005 | Fast responses |
+| OpenAI | GPT-4o mini | $0.005-0.015 | Balanced quality/cost |
+| Anthropic | Claude 3.5 Haiku | $0.008-0.020 | Complex reasoning |
+| OpenAI | GPT-4o | $0.020-0.080 | Premium quality |
 
-## Security & Privacy
-
-The plugin implements multiple layers of security protection:
-
-### Automatic Redaction
-- **Built-in patterns**: Automatically detects and redacts passwords, tokens, API keys, SSH keys, etc.
-- **File paths**: Removes user-specific paths like `/home/username/` 
-- **URLs**: Redacts credentials in URLs
-- **Email addresses**: Partially masks email addresses
-
-### External Secret Management
-Supports integration with enterprise secret management:
-
-- **AWS Secrets Manager**: Recommended for AWS environments
-- **HashiCorp Vault**: Enterprise-grade secret management
-- **Google Secret Manager**: For GCP environments
-- **Environment Variables**: Fallback option (less secure)
-
-### Container Security
-- **Non-root execution**: All containers run as non-root user
-- **Capability dropping**: Removes unnecessary Linux capabilities
-- **Security scanning**: Integrated vulnerability scanning
-- **AppArmor/seccomp**: Security profiles enforced
-
-### What Gets Sent to AI
-- **Sanitized log excerpts** (with secrets removed)
-- **Error patterns and categories** 
-- **Basic build metadata** (pipeline name, branch, commit hash)
-- **Safe environment variables** (no secrets)
-
-### What Never Gets Sent
-- **Raw logs** (always sanitized first)
-- **Environment variables** containing secrets
-- **File contents** (only log output)
-- **Sensitive build artifacts**
-
-## Error Types Detected
-
-The plugin automatically detects and categorizes various error types:
-
-| Category | Examples | Confidence |
-|----------|----------|------------|
-| **Compilation** | Syntax errors, missing imports, type errors | High |
-| **Test Failure** | Assertion failures, test timeouts, setup errors | High |
-| **Dependency** | Package not found, version conflicts, resolution errors | High |
-| **Network** | Connection timeouts, DNS failures, certificate errors | Medium |
-| **Permission** | Access denied, file permissions, authentication | High |
-| **Memory** | Out of memory, segmentation faults, allocation failures | High |
-| **Timeout** | Build timeouts, test timeouts, deployment timeouts | Medium |
-| **Configuration** | Missing config files, invalid syntax, environment issues | Medium |
-| **Security** | Certificate errors, permission denied, authentication failures | High |
-
-## Performance
-
-### Optimization Tips
-
-1. **Use Caching**: Enable caching to avoid repeated analysis of similar errors
-2. **Batch APIs**: Enable for non-critical analysis (50% cost savings)
-3. **Choose Efficient Models**: Use mini/flash variants for speed and cost
-4. **Async Execution**: Enable for non-blocking analysis
-5. **Branch Filtering**: Only analyze important branches
-
-### Performance Metrics
-
-The plugin tracks and reports:
-- Analysis duration
-- API tokens consumed  
-- Cache hit rates (54% improvement reported)
-- Provider response times
-- Memory and disk usage
-
-## API Costs (2025 Pricing)
-
-Approximate costs per analysis (USD):
-
-| Provider | Model | ~Cost/Analysis | Notes |
-|----------|-------|---------------|-------|
-| OpenAI | gpt-4o-mini | $0.001-0.005 | Most cost-effective |
-| OpenAI | gpt-4.1 | $0.01-0.05 | Premium quality |
-| Claude | claude-sonnet-4 | $0.005-0.02 | Excellent reasoning |
-| Claude | claude-opus-4 | $0.02-0.08 | Flagship model |
-| Gemini | gemini-2.5-flash | $0.0005-0.002 | Most economical |
-| Gemini | gemini-2.5-pro | $0.002-0.01 | Premium multimodal |
-
-*Costs depend on context size and response length. Batch APIs provide 50% savings.*
-
-### Cost Optimization
-- Enable caching to avoid duplicate analyses
-- Use batch APIs for non-critical analysis
-- Choose appropriate models for your use case
-- Set reasonable rate limits and timeouts
+### Cost Reduction Features
+- **Caching**: Avoid duplicate analyses (60%+ savings)
+- **Log truncation**: Send only relevant error context
+- **Rate limiting**: Prevent API quota exhaustion
+- **Batch processing**: Analyze multiple errors together
 
 ## Development
 
+### Prerequisites
+- Python 3.10+ (3.12 recommended)
+- Docker for testing
+- External secret management system
+
 ### Local Testing
 
-1. **Clone the repository**:
+1. **Clone and setup**:
 ```bash
 git clone https://github.com/your-org/ai-error-analysis-buildkite-plugin
 cd ai-error-analysis-buildkite-plugin
+pip install -r requirements.txt
 ```
 
-2. **Set up environment**:
+2. **Configure secrets**:
 ```bash
-# Configure secret management (recommended)
+# AWS Secrets Manager
 aws secretsmanager create-secret \
-  --name buildkite/openai-api-key \
-  --secret-string '{"api_key":"your-key"}'
+  --name buildkite/ai-error-analysis/openai \
+  --secret-string '{"api_key":"your-key-here"}'
 
-export BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_DEBUG_MODE="true"
+# Or use environment variables for testing only
+export BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_API_KEY_ENV="OPENAI_API_KEY"
+export OPENAI_API_KEY="your-test-key"
 ```
 
-3. **Run tests**:
+3. **Test with sample failure**:
 ```bash
-docker-compose run --rm tests
-```
-
-4. **Test with sample failure**:
-```bash
-# Simulate a build failure
 export BUILDKITE_COMMAND_EXIT_STATUS="1"
 export BUILDKITE_COMMAND="npm test"
 ./hooks/post-command
+```
+
+### Testing Framework
+
+```bash
+# Python unit tests
+pytest tests/ --cov=lib --cov-report=term --cov-fail-under=80
+
+# Security scanning
+bandit -r lib/
+
+# Hook integration tests  
+bats tests/hooks.bats
+
+# Type checking
+mypy lib/ --strict
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### Plugin Not Running
+**No analysis generated**:
 ```bash
-# Check plugin is properly installed
-ls -la .buildkite/plugins/
+# Check plugin initialization
+echo $BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER
 
-# Verify environment variables (corrected pattern)
-env | grep BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS
+# Verify secret access
+aws secretsmanager get-secret-value --secret-id buildkite/openai-key
 
-# Check permissions
-ls -la hooks/
-```
-
-#### Secret Management Issues  
-```bash
-# Verify AWS Secrets Manager access
-aws secretsmanager get-secret-value --secret-id buildkite/openai-api-key
-
-# Test Vault connectivity
-vault kv get secret/buildkite/openai-api-key
-
-# Check container security
-docker run --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges:true your-image
-```
-
-#### No Analysis Generated
-```bash
 # Enable debug mode
-export BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ADVANCED_DEBUG_MODE="true"
-
-# Check error detection
-python3 lib/error_detector.py
-
-# Verify exit code triggers analysis
-echo "Exit code: $BUILDKITE_COMMAND_EXIT_STATUS"
+export BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_DEBUG=true
 ```
+
+**API errors**:
+- Verify correct 2025 model names
+- Check API key permissions and quotas
+- Ensure network access to AI provider endpoints
+- Review rate limiting configuration
+
+**Security warnings**:
+- Never store secrets in pipeline configuration
+- Use external secret management in production
+- Regularly rotate API keys
+- Monitor for secret exposure in logs
 
 ### Health Check
-
-Run comprehensive health check:
 
 ```bash
 python3 lib/health_check.py
 ```
 
 Validates:
-- ✅ Python version compatibility
-- ✅ Required system commands
-- ✅ Plugin file integrity
-- ✅ File permissions
-- ✅ Secret management configuration
-- ✅ AI provider connectivity
-- ✅ Cache setup
-- ✅ Container security
-- ✅ Input validation
+- ✅ External secret access
+- ✅ AI provider connectivity  
+- ✅ Log sanitization effectiveness
+- ✅ Container security configuration
+- ✅ Rate limiting setup
 
 ## Contributing
 
@@ -612,13 +433,6 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Support
-
-- 📚 **Documentation**: [Plugin Docs](https://github.com/your-org/ai-error-analysis-buildkite-plugin/docs)
-- 💬 **Community**: [Buildkite Community](https://community.buildkite.com/)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/your-org/ai-error-analysis-buildkite-plugin/issues)
-- 📧 **Enterprise**: Contact your Buildkite representative
-
 ---
 
-**Made with ❤️ for the Buildkite community**
+**Security-First AI-Powered DevOps Intelligence for Buildkite**

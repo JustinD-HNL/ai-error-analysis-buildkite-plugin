@@ -1,295 +1,246 @@
 name: AI Error Analysis
-description: Automatically analyzes build failures using AI models to provide actionable insights and suggestions
+description: Analyzes build failures using AI to provide insights and solutions
 author: https://github.com/your-org/ai-error-analysis-buildkite-plugin
 requirements:
   - python3
   - curl
+  - jq
 
 configuration:
   properties:
-    # AI Provider Configuration
-    ai_providers:
+    provider:
+      type: string
+      enum: ["openai", "anthropic", "gemini"]
+      description: "AI provider to use for analysis"
+    
+    model:
+      type: string
+      description: "Specific AI model to use (optional, provider default used if not specified)"
+    
+    api_key_env:
+      type: string
+      description: "Environment variable containing the API key (fallback for external secrets)"
+      default: "{PROVIDER}_API_KEY"
+    
+    max_tokens:
+      type: integer
+      minimum: 100
+      maximum: 4000
+      default: 1000
+      description: "Maximum tokens for AI response"
+    
+    temperature:
+      type: number
+      minimum: 0.0
+      maximum: 2.0
+      default: 0.1
+      description: "AI model temperature for response randomness"
+    
+    enable_caching:
+      type: boolean
+      default: true
+      description: "Enable prompt caching for cost savings"
+    
+    cache_ttl:
+      type: integer
+      minimum: 300
+      maximum: 86400
+      default: 3600
+      description: "Cache time-to-live in seconds"
+    
+    # External Secret Management (2025 Security Standard)
+    secret_source:
+      type: object
+      description: "External secret management configuration (required for production)"
+      properties:
+        type:
+          type: string
+          enum: ["aws_secrets_manager", "vault", "gcp_secret_manager", "env_var"]
+          description: "Type of secret management system"
+        
+        # AWS Secrets Manager
+        secret_name:
+          type: string
+          description: "AWS Secrets Manager secret name"
+        region:
+          type: string
+          default: "us-east-1"
+          description: "AWS region for Secrets Manager"
+        
+        # HashiCorp Vault
+        vault_path:
+          type: string
+          description: "Vault secret path (e.g., secret/buildkite/api-key)"
+        vault_role:
+          type: string
+          description: "Vault AppRole for authentication"
+        vault_addr:
+          type: string
+          description: "Vault server address (uses VAULT_ADDR env var if not specified)"
+        
+        # Google Cloud Secret Manager
+        project_id:
+          type: string
+          description: "GCP project ID for Secret Manager"
+      additionalProperties: false
+    
+    # Multi-provider configuration (advanced)
+    providers:
       type: array
-      description: List of AI providers to use for error analysis
-      default:
-        - name: openai
-          model: o4-mini
+      description: "Multiple AI providers with fallback (alternative to single provider)"
       items:
         type: object
         properties:
-          name:
+          provider:
             type: string
-            enum: ["openai", "claude", "gemini"]
-            description: AI provider name
+            enum: ["openai", "anthropic", "gemini"]
           model:
             type: string
-            description: Model name (e.g., gpt-4.1, o4-mini, claude-opus-4, claude-sonnet-4, gemini-2.5-pro, gemini-2.5-flash)
-          api_key_env:
-            type: string
-            description: Environment variable containing the API key
-            default: "{PROVIDER}_API_KEY"
-          endpoint:
-            type: string
-            description: Custom API endpoint (optional)
-          max_tokens:
+          priority:
             type: integer
-            description: Maximum tokens for response
-            default: 1000
-          timeout:
-            type: integer
-            description: Request timeout in seconds (300s for reasoning models)
-            default: 60
-          use_batch_api:
-            type: boolean
-            description: Use batch API for 50% cost savings (non-real-time)
-            default: false
-        required: ["name"]
+            minimum: 1
+            maximum: 10
+            default: 1
+          secret_source:
+            $ref: "#/configuration/properties/secret_source"
+        required: ["provider"]
         additionalProperties: false
-
-    # Error Detection Configuration  
-    trigger:
+    
+    fallback_strategy:
       type: string
-      enum: ["auto", "explicit", "always"]
-      description: When to trigger error analysis
-      default: "auto"
-
-    conditions:
-      type: object
-      description: Conditions for triggering analysis
-      properties:
-        exit_status:
-          type: array
-          description: Exit codes that trigger analysis
-          items:
-            type: integer
-          default: [1, 2, 125, 126, 127, 128, 130]
-        branches:
-          type: array
-          description: Git branches to analyze (empty = all branches)
-          items:
-            type: string
-          default: []
-        patterns:
-          type: array
-          description: Log patterns that trigger analysis
-          items:
-            type: string
-          default: ["ERROR", "FAILED", "Exception", "fatal:", "panic:"]
-      additionalProperties: false
-
-    # Context and Analysis Configuration
+      enum: ["priority", "round_robin", "fail_fast"]
+      default: "priority"
+      description: "Strategy when primary provider fails"
+    
+    # Context Configuration
     context:
       type: object
-      description: Context gathering configuration
+      description: "Build context configuration"
       properties:
-        log_lines:
-          type: integer
-          description: Number of log lines to analyze
-          default: 500
-          minimum: 10
-          maximum: 2000
-        include_environment:
+        include_env_vars:
           type: boolean
-          description: Include safe environment variables in context
-          default: true
-        include_pipeline_info:
-          type: boolean
-          description: Include pipeline and build metadata
-          default: true
+          default: false
+          description: "Include environment variables (security risk)"
         include_git_info:
           type: boolean
-          description: Include git commit and branch information
           default: true
+          description: "Include git branch, commit, and author info"
+        max_log_lines:
+          type: integer
+          minimum: 50
+          maximum: 2000
+          default: 500
+          description: "Maximum log lines to analyze"
         custom_context:
           type: string
-          description: Custom context to include in analysis
-          default: ""
           maxLength: 1000
+          description: "Custom context to include in analysis"
       additionalProperties: false
-
-    # Security and Privacy
-    redaction:
-      type: object
-      description: Log redaction configuration
-      properties:
-        custom_patterns:
-          type: array
-          description: Custom regex patterns to redact
-          items:
-            type: string
-          default: []
-          maxItems: 50
-        redact_file_paths:
-          type: boolean
-          description: Redact file paths that might contain user info
-          default: true
-        redact_urls:
-          type: boolean
-          description: Redact URLs that might contain sensitive data
-          default: true
-        use_external_secrets:
-          type: boolean
-          description: Use external secret management (AWS Secrets Manager, Vault, etc.)
-          default: false
-        secret_manager_config:
-          type: object
-          description: External secret manager configuration
-          properties:
-            provider:
-              type: string
-              enum: ["aws-secrets-manager", "hashicorp-vault", "google-secret-manager"]
-            region:
-              type: string
-            secret_path:
-              type: string
-          additionalProperties: false
-      additionalProperties: false
-
+    
     # Output Configuration
     output:
       type: object
-      description: Output configuration
+      description: "Output and reporting configuration"
       properties:
-        annotation_style:
+        style:
           type: string
           enum: ["error", "warning", "info", "success"]
-          description: Buildkite annotation style
           default: "error"
-        annotation_context:
-          type: string
-          description: Unique context for the annotation
-          default: "ai-error-analysis"
-          pattern: "^[a-zA-Z0-9_-]+$"
-          maxLength: 50
+          description: "Buildkite annotation style"
         include_confidence:
           type: boolean
-          description: Include confidence score in output
           default: true
-        save_as_artifact:
+          description: "Include AI confidence score in output"
+        save_artifact:
           type: boolean
-          description: Save detailed analysis as build artifact
           default: false
+          description: "Save detailed analysis as build artifact"
         artifact_path:
           type: string
-          description: Path for analysis artifact
-          default: "ai-analysis-report.json"
-          maxLength: 200
+          default: "ai-analysis.json"
+          description: "Path for analysis artifact"
       additionalProperties: false
-
-    # Performance and Reliability
+    
+    # Performance Configuration
     performance:
       type: object
-      description: Performance configuration
+      description: "Performance and reliability settings"
       properties:
-        timeout:
+        timeout_seconds:
           type: integer
-          description: Total analysis timeout in seconds
-          default: 120
           minimum: 30
           maximum: 600
+          default: 120
+          description: "Analysis timeout in seconds"
+        retry_attempts:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 3
+          description: "Number of retry attempts on failure"
+        rate_limit_rpm:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 30
+          description: "Rate limit requests per minute"
         async_execution:
           type: boolean
-          description: Run analysis asynchronously (don't block build)
           default: false
-        cache_enabled:
-          type: boolean
-          description: Enable caching of similar error patterns
-          default: true
-        cache_ttl:
-          type: integer
-          description: Cache time-to-live in seconds
-          default: 3600
-          minimum: 300
-          maximum: 86400
-        fallback_strategy:
-          type: string
-          enum: ["round_robin", "priority", "fail_fast"]
-          description: Strategy when primary AI provider fails
-          default: "priority"
-        rate_limit:
-          type: object
-          description: Rate limiting configuration
-          properties:
-            requests_per_minute:
-              type: integer
-              default: 30
-              minimum: 1
-              maximum: 1000
-            burst_limit:
-              type: integer
-              default: 10
-              minimum: 1
-              maximum: 100
-          additionalProperties: false
+          description: "Run analysis asynchronously (don't block build)"
       additionalProperties: false
-
-    # Advanced Configuration
-    advanced:
+    
+    # Security Configuration (2025 Standards)
+    security:
       type: object
-      description: Advanced configuration options
+      description: "Security settings"
       properties:
-        debug_mode:
+        sanitize_logs:
           type: boolean
-          description: Enable debug logging
-          default: false
-        dry_run:
+          default: true
+          description: "Enable log sanitization before AI analysis"
+        redact_secrets:
           type: boolean
-          description: Test configuration without calling AI APIs
+          default: true
+          description: "Automatically redact secrets from logs"
+        allowed_domains:
+          type: array
+          items:
+            type: string
+          default: ["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com"]
+          description: "Allowed domains for API calls"
+        run_as_non_root:
+          type: boolean
+          default: true
+          description: "Enforce non-root container execution"
+        enable_thinking_mode:
+          type: boolean
           default: false
-        custom_prompts:
-          type: object
-          description: Custom AI prompts for different error types
-          properties:
-            default:
-              type: string
-              description: Default analysis prompt
-              maxLength: 2000
-            compilation_error:
-              type: string
-              description: Prompt for compilation errors
-              maxLength: 2000
-            test_failure:
-              type: string
-              description: Prompt for test failures
-              maxLength: 2000
-            deployment_error:
-              type: string
-              description: Prompt for deployment errors
-              maxLength: 2000
-            network_error:
-              type: string
-              description: Prompt for network-related errors
-              maxLength: 2000
-          additionalProperties: false
-        max_retries:
-          type: integer
-          description: Maximum retry attempts for failed API calls
-          default: 3
-          minimum: 0
-          maximum: 10
-        container_security:
-          type: object
-          description: Container security configuration
-          properties:
-            enforce_non_root:
-              type: boolean
-              description: Enforce non-root container execution
-              default: true
-            drop_capabilities:
-              type: array
-              description: Linux capabilities to drop
-              items:
-                type: string
-              default: ["ALL"]
-            enable_apparmor:
-              type: boolean
-              description: Enable AppArmor profile
-              default: true
-            enable_seccomp:
-              type: boolean
-              description: Enable seccomp profile
-              default: true
-          additionalProperties: false
+          description: "Enable extended thinking mode for supported models (Claude Opus 4)"
+        enable_deep_think:
+          type: boolean
+          default: false
+          description: "Enable Deep Think mode for supported models (Gemini Pro)"
       additionalProperties: false
+    
+    # Debug and Development
+    debug:
+      type: boolean
+      default: false
+      description: "Enable debug logging"
+    
+    dry_run:
+      type: boolean
+      default: false
+      description: "Test configuration without calling AI APIs"
+
+  # Either provider OR providers must be specified, but not both
+  oneOf:
+    - required: ["provider"]
+      not:
+        required: ["providers"]
+    - required: ["providers"]
+      not:
+        required: ["provider"]
 
   additionalProperties: false

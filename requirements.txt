@@ -1,0 +1,49 @@
+# AI Error Analysis Buildkite Plugin - Python Requirements (2025)
+# Updated package versions for 2025 AI provider APIs
+
+# Core AI provider libraries with latest versions
+# OpenAI API (2025 models: GPT-4o, GPT-4o mini, GPT-4o nano)
+openai>=1.30.0
+
+# Anthropic API (2025 models: Claude 3.5 Haiku, Claude Sonnet 4, Claude Opus 4)
+anthropic>=0.25.0
+
+# Google Generative AI (2025 models: Gemini 2.0 Flash, Gemini 2.5 Pro)
+google-generativeai>=0.5.0
+
+# HTTP client library
+requests>=2.31.0
+
+# JSON/YAML configuration handling
+pyyaml>=6.0.1
+
+# Security and cryptography
+cryptography>=41.0.0
+
+# AWS SDK for Secrets Manager integration
+boto3>=1.34.0
+botocore>=1.34.0
+
+# Google Cloud SDK for Secret Manager
+google-cloud-secret-manager>=2.18.0
+
+# Data validation and parsing
+pydantic>=2.5.0
+
+# CLI argument parsing
+click>=8.1.0
+
+# Development and testing dependencies (optional)
+# Install with: pip install -r requirements-dev.txt
+
+# Type hints backport for Python < 3.10 (remove if using Python 3.10+)
+typing-extensions>=4.8.0; python_version < "3.10"
+
+# Optional: Performance monitoring
+psutil>=5.9.0
+
+# Optional: Advanced logging
+structlog>=23.2.0
+
+# Optional: Rate limiting
+ratelimit>=2.2.1

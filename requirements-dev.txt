@@ -44,3 +44,6 @@ faker>=19.4.0
 
 # Code coverage reporting
 coverage[toml]>=7.3.0
+
+# Added from the code block
+mock

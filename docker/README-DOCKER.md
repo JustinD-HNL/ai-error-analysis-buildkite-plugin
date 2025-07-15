@@ -1,6 +1,6 @@
-# Docker Test Environment for AI Error Analysis Buildkite Plugin
+# Docker Environment for AI Error Analysis Buildkite Plugin
 
-This Docker setup provides a fully functional Buildkite agent with the AI Error Analysis plugin pre-installed for testing purposes.
+This Docker setup provides a fully functional Buildkite agent with the AI Error Analysis plugin pre-installed for testing, development, and production deployment.
 
 ## Quick Start
 
@@ -146,3 +146,113 @@ steps:
 - The container runs as the `buildkite` user (non-root)
 - Plugin files are mounted read-only by default
 - Agent data is persisted in a Docker volume
+
+## Deployment Options
+
+### Using the deploy.sh Script
+
+The `deploy.sh` script provides multiple deployment options:
+
+```bash
+# Build the image
+./docker/deploy.sh build
+
+# Run locally with docker-compose
+./docker/deploy.sh compose
+
+# Run standalone container
+BUILDKITE_AGENT_TOKEN=xxx OPENAI_API_KEY=sk-xxx ./docker/deploy.sh run
+
+# Push to Docker registry
+REGISTRY_URL=docker.io/username ./docker/deploy.sh push
+
+# Export image for offline deployment
+./docker/deploy.sh export my-plugin.tar
+```
+
+### Deploy to Docker Registry
+
+1. **Docker Hub:**
+```bash
+REGISTRY_URL=docker.io/yourusername IMAGE_TAG=v1.0.0 ./docker/deploy.sh push
+```
+
+2. **AWS ECR:**
+```bash
+# Login to ECR
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 123456789.dkr.ecr.us-east-1.amazonaws.com
+
+# Push image
+REGISTRY_URL=123456789.dkr.ecr.us-east-1.amazonaws.com IMAGE_TAG=latest ./docker/deploy.sh push
+```
+
+3. **Google Container Registry:**
+```bash
+# Configure Docker for GCR
+gcloud auth configure-docker
+
+# Push image
+REGISTRY_URL=gcr.io/your-project IMAGE_TAG=latest ./docker/deploy.sh push
+```
+
+### Deploy to Kubernetes
+
+1. **Update the image in kubernetes-deployment.yaml:**
+```yaml
+image: your-registry.com/ai-error-analysis-buildkite-plugin:latest
+```
+
+2. **Create secrets:**
+```bash
+kubectl create secret generic buildkite-agent-secrets \
+  --from-literal=agent-token=YOUR_BUILDKITE_TOKEN \
+  --from-literal=openai-api-key=YOUR_OPENAI_KEY \
+  -n buildkite
+```
+
+3. **Apply the deployment:**
+```bash
+kubectl apply -f docker/kubernetes-deployment.yaml
+```
+
+4. **Check deployment status:**
+```bash
+kubectl get pods -n buildkite
+kubectl logs -f deployment/buildkite-ai-error-agent -n buildkite
+```
+
+### Deploy with Docker Swarm
+
+```bash
+# Initialize swarm (if not already done)
+docker swarm init
+
+# Create secrets
+echo "YOUR_BUILDKITE_TOKEN" | docker secret create buildkite-token -
+echo "YOUR_OPENAI_KEY" | docker secret create openai-key -
+
+# Deploy stack
+docker stack deploy -c docker/docker-compose.yml buildkite-ai
+```
+
+### Production Considerations
+
+1. **Security:**
+   - Never hardcode API keys in images
+   - Use secrets management (Kubernetes Secrets, Docker Secrets, AWS SSM, etc.)
+   - Scan images for vulnerabilities: `docker scan ai-error-analysis-buildkite-plugin:latest`
+
+2. **Monitoring:**
+   - Enable agent metrics endpoint
+   - Use log aggregation (ELK, CloudWatch, etc.)
+   - Set up alerts for agent disconnections
+
+3. **Scaling:**
+   - Adjust replica count based on workload
+   - Use horizontal pod autoscaling in Kubernetes
+   - Consider node affinity for GPU workloads
+
+4. **Updates:**
+   - Use semantic versioning for images
+   - Implement rolling updates
+   - Test in staging environment first

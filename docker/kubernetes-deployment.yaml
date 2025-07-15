@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: buildkite
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: buildkite-agent-secrets
+  namespace: buildkite
+type: Opaque
+stringData:
+  agent-token: "your-buildkite-agent-token-here"
+  openai-api-key: "your-openai-api-key-here"
+  anthropic-api-key: "your-anthropic-api-key-here"
+  google-api-key: "your-google-api-key-here"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkite-ai-error-agent
+  namespace: buildkite
+  labels:
+    app: buildkite-agent
+    plugin: ai-error-analysis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: buildkite-agent
+      plugin: ai-error-analysis
+  template:
+    metadata:
+      labels:
+        app: buildkite-agent
+        plugin: ai-error-analysis
+    spec:
+      containers:
+      - name: buildkite-agent
+        image: ai-error-analysis-buildkite-plugin:latest
+        # Replace with your registry URL, e.g., docker.io/username/ai-error-analysis-buildkite-plugin:latest
+        imagePullPolicy: Always
+        command: ["agent"]
+        env:
+        - name: BUILDKITE_AGENT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: buildkite-agent-secrets
+              key: agent-token
+        - name: BUILDKITE_AGENT_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: BUILDKITE_AGENT_TAGS
+          value: "kubernetes=true,ai-error-analysis=true"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: buildkite-agent-secrets
+              key: openai-api-key
+              optional: true
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: buildkite-agent-secrets
+              key: anthropic-api-key
+              optional: true
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: buildkite-agent-secrets
+              key: google-api-key
+              optional: true
+        - name: AI_PROVIDER
+          value: "openai"
+        - name: AI_MODEL
+          value: "gpt-4o"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: buildkite-builds
+          mountPath: /home/buildkite/.buildkite-agent/builds
+      volumes:
+      - name: buildkite-builds
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkite-agent-metrics
+  namespace: buildkite
+  labels:
+    app: buildkite-agent
+spec:
+  selector:
+    app: buildkite-agent
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP

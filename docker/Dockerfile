@@ -50,7 +50,8 @@ COPY --chown=buildkite:buildkite .. /home/buildkite/ai-error-analysis-buildkite-
 
 # Install Python dependencies
 RUN /home/buildkite/.venv/bin/pip install --upgrade pip && \
-    /home/buildkite/.venv/bin/pip install -r /home/buildkite/ai-error-analysis-buildkite-plugin/requirements.txt
+    /home/buildkite/.venv/bin/pip install -r /home/buildkite/ai-error-analysis-buildkite-plugin/requirements.txt && \
+    /home/buildkite/.venv/bin/pip install -r /home/buildkite/ai-error-analysis-buildkite-plugin/requirements-dev.txt
 
 # Set up Buildkite agent configuration
 RUN mkdir -p /home/buildkite/.buildkite-agent/plugins && \

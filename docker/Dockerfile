@@ -55,7 +55,17 @@ RUN /home/buildkite/.venv/bin/pip install --upgrade pip && \
 
 # Set up Buildkite agent configuration
 RUN mkdir -p /home/buildkite/.buildkite-agent/plugins && \
-    ln -s /home/buildkite/ai-error-analysis-buildkite-plugin /home/buildkite/.buildkite-agent/plugins/ai-error-analysis
+    ln -s /home/buildkite/ai-error-analysis-buildkite-plugin /home/buildkite/.buildkite-agent/plugins/ai-error-analysis && \
+    mkdir -p /home/buildkite/.buildkite-agent/hooks
+
+# Create a minimal agent configuration
+RUN echo 'token="${BUILDKITE_AGENT_TOKEN}"\n\
+name="${BUILDKITE_AGENT_NAME:-docker-test-agent}"\n\
+tags="${BUILDKITE_AGENT_TAGS:-docker=true,ai-error-analysis=true}"\n\
+build-path="/home/buildkite/.buildkite-agent/builds"\n\
+plugins-path="/home/buildkite/.buildkite-agent/plugins"\n\
+hooks-path="/home/buildkite/.buildkite-agent/hooks"\n\
+' > /home/buildkite/.buildkite-agent/buildkite-agent.cfg
 
 # Create a test pipeline directory
 RUN mkdir -p /home/buildkite/test-pipeline
@@ -105,7 +115,7 @@ echo ""\n\
 \n\
 if [ "$1" = "agent" ]; then\n\
     echo "Starting Buildkite agent..."\n\
-    exec buildkite-agent start\n\
+    exec buildkite-agent start --config /home/buildkite/.buildkite-agent/buildkite-agent.cfg\n\
 elif [ "$1" = "test" ]; then\n\
     echo "Running plugin tests..."\n\
     cd /home/buildkite/ai-error-analysis-buildkite-plugin\n\

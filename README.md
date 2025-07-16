@@ -27,7 +27,7 @@ steps:
   - label: "Tests"
     command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           provider: openai
           model: "GPT-4o mini"
           secret_source:
@@ -42,7 +42,7 @@ steps:
   - label: "Tests" 
     command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           provider: anthropic
           model: "Claude 3.5 Haiku"
           secret_source:
@@ -57,7 +57,7 @@ steps:
   - label: "Tests"
     command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           provider: gemini
           model: "Gemini 2.0 Flash"
           secret_source:
@@ -84,7 +84,7 @@ export OPENAI_API_KEY="your-api-key-here"
 steps:
   - command: "pytest tests/"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           provider: openai
           model: "GPT-4o mini"
           max_tokens: 1000
@@ -100,7 +100,7 @@ steps:
 steps:
   - command: "cargo test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           provider: anthropic
           model: "Claude Sonnet 4"
           max_tokens: 2000
@@ -278,7 +278,7 @@ export ANTHROPIC_API_KEY=$(vault kv get \
 steps:
   - command: "make test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           provider: openai
           secret_source:
             type: aws_secrets_manager
@@ -290,7 +290,7 @@ steps:
 steps:
   - command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           providers:
             - provider: openai
               model: "GPT-4o mini"
@@ -310,7 +310,7 @@ steps:
 steps:
   - command: "pytest"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin#v1.0.0:
+      - your-org/ai-error-analysis-buildkite-plugin:
           provider: gemini
           model: "Gemini 2.0 Flash"  # Most cost-effective
           max_tokens: 500

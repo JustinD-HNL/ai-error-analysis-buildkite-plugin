@@ -260,7 +260,7 @@ EOF
   
   # Step 2: Sanitize logs
   echo "🧹 Sanitizing logs..."
-  if ! python3 "${PLUGIN_DIR}/lib/sanitizer.py" \
+  if ! python3 "${PLUGIN_DIR}/lib/log_sanitizer.py" \
     "${TEMP_DIR}/context.json" \
     "${TEMP_DIR}/sanitized_context.json"; then
     echo "❌ Log sanitization failed" >&2
@@ -271,7 +271,7 @@ EOF
   local cached_result=""
   if [[ "${ENABLE_CACHING}" == "true" ]]; then
     echo "💾 Checking cache..."
-    cached_result=$(python3 "${PLUGIN_DIR}/lib/cache.py" check \
+    cached_result=$(python3 "${PLUGIN_DIR}/lib/cache_manager.py" check \
       "${TEMP_DIR}/sanitized_context.json" 2>/dev/null || echo "")
     
     if [[ -n "$cached_result" ]]; then
@@ -302,7 +302,7 @@ EOF
   
   # Step 5: Cache result if enabled
   if [[ "${ENABLE_CACHING}" == "true" ]]; then
-    python3 "${PLUGIN_DIR}/lib/cache.py" store \
+    python3 "${PLUGIN_DIR}/lib/cache_manager.py" store \
       "${TEMP_DIR}/sanitized_context.json" \
       "${TEMP_DIR}/analysis_result.json" 2>/dev/null || true
   fi
@@ -319,7 +319,7 @@ EOF
 generate_report() {
   echo "📊 Generating report..."
   
-  if ! python3 "${PLUGIN_DIR}/lib/report.py" \
+  if ! python3 "${PLUGIN_DIR}/lib/report_generator.py" \
     "${TEMP_DIR}/analysis_result.json" \
     > "${TEMP_DIR}/report.html"; then
     echo "❌ Report generation failed" >&2

@@ -224,21 +224,27 @@ The plugin automatically removes sensitive information before sending to AI:
 
 ### Container Security (2025 Standards)
 
+The plugin enforces the following security settings:
+
+**Plugin-level security configuration:**
 ```yaml
 security:
-  container:
-    run_as_non_root: true
-    user_id: 1000
-    group_id: 1000
-    read_only_root_fs: true
-    drop_capabilities: ["ALL"]
-    security_opts: ["no-new-privileges:true"]
-  
-  network:
-    allowed_domains: 
-      - "api.openai.com"
-      - "api.anthropic.com" 
-      - "generativelanguage.googleapis.com"
+  run_as_non_root: true  # Enforced by the plugin
+  allowed_domains:       # Restricts API calls to these domains
+    - "api.openai.com"
+    - "api.anthropic.com" 
+    - "generativelanguage.googleapis.com"
+```
+
+**Recommended Buildkite Agent container security settings:**
+```yaml
+# docker-compose.yml or Kubernetes deployment
+security_opt:
+  - no-new-privileges:true
+cap_drop:
+  - ALL
+read_only: true
+user: "1000:1000"
 ```
 
 ### External Secret Management Examples

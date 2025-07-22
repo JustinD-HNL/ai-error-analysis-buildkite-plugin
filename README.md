@@ -13,9 +13,9 @@
 
 | Provider | Models | Authentication | Notes |
 |----------|--------|----------------|-------|
-| **OpenAI** | `GPT-4o`, `GPT-4o mini`, `GPT-4o nano` | Bearer token | Latest models with improved reasoning |
-| **Anthropic** | `Claude 3.5 Haiku`, `Claude Sonnet 4`, `Claude Opus 4` | x-api-key header | Extended thinking mode available for Opus 4 |
-| **Google** | `Gemini 2.0 Flash`, `Gemini 2.5 Pro` | API key parameter | Deep Think mode for Pro models |
+| **OpenAI** | `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `gpt-4o-mini` | Bearer token | GPT-4.1 series are the newest with 1M token context |
+| **Anthropic** | `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022` | x-api-key header | Claude Opus 4 is the most capable model |
+| **Google** | `gemini-2.0-flash`, `gemini-2.0-pro-exp`, `gemini-1.5-pro`, `gemini-1.5-flash` | API key parameter | Gemini 2.0 Flash is GA, 2.0 Pro is experimental |
 
 ## Quick Start
 
@@ -29,7 +29,7 @@ steps:
     plugins:
       - ./ai-error-analysis:
           provider: openai
-          model: "GPT-4o mini"
+          model: "gpt-4o-mini"
           secret_source:
             type: aws_secrets_manager
             secret_name: buildkite/ai-error-analysis/openai-key
@@ -44,7 +44,7 @@ steps:
     plugins:
       - ./ai-error-analysis:
           provider: anthropic
-          model: "Claude 3.5 Haiku"
+          model: "claude-3-5-haiku-20241022"
           secret_source:
             type: vault
             vault_path: secret/buildkite/anthropic-key
@@ -59,7 +59,7 @@ steps:
     plugins:
       - ./ai-error-analysis:
           provider: gemini
-          model: "Gemini 2.0 Flash"
+          model: "gemini-1.5-flash"
           secret_source:
             type: gcp_secret_manager
             project_id: your-project
@@ -86,7 +86,7 @@ steps:
     plugins:
       - ./ai-error-analysis:
           provider: openai
-          model: "GPT-4o mini"
+          model: "gpt-4o-mini"
           max_tokens: 1000
           enable_caching: true
           secret_source:
@@ -102,7 +102,7 @@ steps:
     plugins:
       - ./ai-error-analysis:
           provider: anthropic
-          model: "Claude Sonnet 4"
+          model: "claude-3-5-sonnet-20241022"
           max_tokens: 2000
           enable_caching: true
           temperature: 0.1
@@ -161,7 +161,7 @@ Environment variables follow the pattern: `BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_<P
 
 ```yaml
 provider: openai
-model: "GPT-4o mini"  # or "GPT-4o", "GPT-4o nano"
+model: "gpt-4o-mini"  # or "gpt-4.1", "gpt-4.1-mini", "gpt-4o"
 secret_source:
   type: aws_secrets_manager
   secret_name: buildkite/openai-key
@@ -170,45 +170,48 @@ max_tokens: 1000
 temperature: 0.1
 ```
 
-**Available Models (2025)**:
-- `GPT-4o`: Latest flagship model ($3/$10 per 1M tokens)
-- `GPT-4o mini`: Cost-effective option ($0.15/$0.60 per 1M tokens)  
-- `GPT-4o nano`: Ultra-fast responses ($0.05/$0.20 per 1M tokens)
+**Available Models**:
+- `gpt-4.1`: Latest model with 1M token context window
+- `gpt-4.1-mini`: Smaller, faster version of GPT-4.1
+- `gpt-4o`: Multimodal flagship model
+- `gpt-4o-mini`: Cost-effective option
 
 ### Anthropic Configuration
 
 ```yaml
 provider: anthropic
-model: "Claude 3.5 Haiku"  # or "Claude Sonnet 4", "Claude Opus 4"
+model: "claude-3-5-sonnet-20241022"  # or other models below
 secret_source:
   type: vault
   vault_path: secret/buildkite/claude-key
   vault_role: buildkite-ai
 max_tokens: 1000
-enable_thinking_mode: true  # For Opus 4
 ```
 
-**Available Models (2025)**:
-- `Claude Opus 4`: Flagship with extended thinking ($15/$75 per 1M tokens)
-- `Claude Sonnet 4`: Balanced performance ($3/$15 per 1M tokens)
-- `Claude 3.5 Haiku`: Fast and cost-effective ($0.25/$1.25 per 1M tokens)
+**Available Models**:
+- `claude-opus-4-20250514`: Claude 4 Opus - Most capable model (best for complex tasks)
+- `claude-sonnet-4-20250514`: Claude 4 Sonnet - Balanced performance
+- `claude-3-5-sonnet-20241022`: Claude 3.5 Sonnet (previous generation)
+- `claude-3-5-haiku-20241022`: Fast and cost-effective
+- `claude-3-opus-20240229`: Claude 3 Opus (legacy)
 
 ### Google Gemini Configuration
 
 ```yaml
 provider: gemini
-model: "Gemini 2.0 Flash"  # or "Gemini 2.5 Pro"
+model: "gemini-1.5-flash"  # or other models below
 secret_source:
   type: gcp_secret_manager
   project_id: your-project
   secret_name: gemini-api-key
 max_tokens: 1000
-enable_deep_think: true  # For Pro models
 ```
 
-**Available Models (2025)**:
-- `Gemini 2.5 Pro`: Premium with Deep Think capability
-- `Gemini 2.0 Flash`: Optimized for speed and cost
+**Available Models**:
+- `gemini-2.0-flash`: Latest GA model with 1M token context
+- `gemini-2.0-pro-exp`: Experimental model with best coding performance
+- `gemini-1.5-pro`: Production-ready balanced model
+- `gemini-1.5-flash`: Fast and cost-effective
 
 ## Security Features
 
@@ -293,12 +296,12 @@ steps:
       - ./ai-error-analysis:
           providers:
             - provider: openai
-              model: "GPT-4o mini"
+              model: "gpt-4o-mini"
               secret_source:
                 type: aws_secrets_manager
                 secret_name: buildkite/openai-key
             - provider: anthropic  
-              model: "Claude 3.5 Haiku"
+              model: "claude-3-5-haiku-20241022"
               secret_source:
                 type: vault
                 vault_path: secret/buildkite/claude-key
@@ -312,7 +315,7 @@ steps:
     plugins:
       - ./ai-error-analysis:
           provider: gemini
-          model: "Gemini 2.0 Flash"  # Most cost-effective
+          model: "gemini-1.5-flash"  # Most cost-effective
           max_tokens: 500
           enable_caching: true
           cache_ttl: 3600
@@ -323,15 +326,16 @@ steps:
 
 ## Cost Optimization
 
-### Approximate Costs (2025 Pricing)
+### Approximate Costs
 
 | Provider | Model | ~Cost/Analysis | Best For |
 |----------|-------|---------------|----------|
-| Google | Gemini 2.0 Flash | $0.001-0.003 | High volume, cost-sensitive |
-| OpenAI | GPT-4o nano | $0.002-0.005 | Fast responses |
-| OpenAI | GPT-4o mini | $0.005-0.015 | Balanced quality/cost |
-| Anthropic | Claude 3.5 Haiku | $0.008-0.020 | Complex reasoning |
-| OpenAI | GPT-4o | $0.020-0.080 | Premium quality |
+| Google | gemini-1.5-flash | $0.001-0.003 | High volume, cost-sensitive |
+| OpenAI | gpt-4o-mini | $0.005-0.015 | Balanced quality/cost |
+| Anthropic | claude-3-5-haiku-20241022 | $0.008-0.020 | Fast Claude responses |
+| Google | gemini-1.5-pro | $0.010-0.030 | Production workloads |
+| Anthropic | claude-3-5-sonnet-20241022 | $0.015-0.045 | Best balance of capability |
+| OpenAI | gpt-4o | $0.020-0.080 | Multimodal analysis |
 
 ### Cost Reduction Features
 - **Caching**: Avoid duplicate analyses (60%+ savings)

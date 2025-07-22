@@ -35,31 +35,26 @@ class AIProviderError(Exception):
 class AIAnalyzer:
     """Main AI analysis engine with 2025 provider support"""
     
-    # Correct 2025 model mappings
+    # Current model mappings
     SUPPORTED_MODELS = {
         "openai": {
-            "GPT-4o": {"endpoint": "chat/completions", "max_tokens": 4096, "cost_per_1k": 0.03},
-            "GPT-4o mini": {"endpoint": "chat/completions", "max_tokens": 16384, "cost_per_1k": 0.0015},
-            "GPT-4o nano": {"endpoint": "chat/completions", "max_tokens": 8192, "cost_per_1k": 0.0005},
-            # Legacy model names for backward compatibility
-            "gpt-4o": {"endpoint": "chat/completions", "max_tokens": 4096, "cost_per_1k": 0.03, "alias": "GPT-4o"},
-            "gpt-4o-mini": {"endpoint": "chat/completions", "max_tokens": 16384, "cost_per_1k": 0.0015, "alias": "GPT-4o mini"}
+            "gpt-4.1": {"endpoint": "chat/completions", "max_tokens": 1000000, "cost_per_1k": 0.05},
+            "gpt-4.1-mini": {"endpoint": "chat/completions", "max_tokens": 1000000, "cost_per_1k": 0.002},
+            "gpt-4o": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.03},
+            "gpt-4o-mini": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.0015}
         },
         "anthropic": {
-            "Claude Opus 4": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.15},
-            "Claude Sonnet 4": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.03},
-            "Claude 3.5 Haiku": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.0025},
-            # Legacy model names for backward compatibility
-            "claude-3-opus-20240229": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.15, "alias": "Claude Opus 4"},
-            "claude-3-sonnet-20240229": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.03, "alias": "Claude Sonnet 4"},
-            "claude-3-haiku-20240307": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.0025, "alias": "Claude 3.5 Haiku"}
+            "claude-opus-4-20250514": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.15},
+            "claude-sonnet-4-20250514": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.03},
+            "claude-3-opus-20240229": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.15},
+            "claude-3-5-sonnet-20241022": {"endpoint": "messages", "max_tokens": 8192, "cost_per_1k": 0.03},
+            "claude-3-5-haiku-20241022": {"endpoint": "messages", "max_tokens": 8192, "cost_per_1k": 0.0025}
         },
         "gemini": {
-            "Gemini 2.5 Pro": {"endpoint": "generateContent", "max_tokens": 2048, "cost_per_1k": 0.002},
-            "Gemini 2.0 Flash": {"endpoint": "generateContent", "max_tokens": 8192, "cost_per_1k": 0.0005},
-            # Legacy model names for backward compatibility  
-            "gemini-1.5-pro": {"endpoint": "generateContent", "max_tokens": 2048, "cost_per_1k": 0.002, "alias": "Gemini 2.5 Pro"},
-            "gemini-1.5-flash": {"endpoint": "generateContent", "max_tokens": 8192, "cost_per_1k": 0.0005, "alias": "Gemini 2.0 Flash"}
+            "gemini-2.0-flash": {"endpoint": "generateContent", "max_tokens": 1000000, "cost_per_1k": 0.0005},
+            "gemini-2.0-pro-exp": {"endpoint": "generateContent", "max_tokens": 2000000, "cost_per_1k": 0.002},
+            "gemini-1.5-pro": {"endpoint": "generateContent", "max_tokens": 2000000, "cost_per_1k": 0.002},
+            "gemini-1.5-flash": {"endpoint": "generateContent", "max_tokens": 1000000, "cost_per_1k": 0.0005}
         }
     }
     
@@ -109,9 +104,9 @@ class AIAnalyzer:
     def _get_default_model(self) -> str:
         """Get default model for provider"""
         defaults = {
-            "openai": "GPT-4o mini",
-            "anthropic": "Claude 3.5 Haiku", 
-            "gemini": "Gemini 2.0 Flash"
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-5-sonnet-20241022", 
+            "gemini": "gemini-1.5-flash"
         }
         return defaults[self.provider]
     
@@ -132,9 +127,7 @@ class AIAnalyzer:
                 "anthropic-version": "2023-06-01"
             }
             
-            # Enable extended thinking for Opus 4
-            if self.model == "Claude Opus 4":
-                self.headers["anthropic-beta"] = "extended-thinking-2024-12-15"
+            # No special headers needed for current models
         
         elif self.provider == "gemini":
             self.api_base = "https://generativelanguage.googleapis.com/v1beta"
@@ -213,17 +206,8 @@ SEVERITY: [low/medium/high]"""
         """Make API call to OpenAI"""
         url = f"{self.api_base}/{self.model_config['endpoint']}"
         
-        # Map model name to API format
-        api_model = self.model.lower().replace(" ", "-")
-        if self.model == "GPT-4o":
-            api_model = "gpt-4o"
-        elif self.model == "GPT-4o mini":
-            api_model = "gpt-4o-mini"
-        elif self.model == "GPT-4o nano":
-            api_model = "gpt-4o-nano"
-        
         data = {
-            "model": api_model,
+            "model": self.model,
             "messages": [
                 {"role": "system", "content": "You are an expert DevOps engineer analyzing CI/CD failures."},
                 {"role": "user", "content": prompt}
@@ -238,37 +222,17 @@ SEVERITY: [low/medium/high]"""
         """Make API call to Anthropic Claude"""
         url = f"{self.api_base}/{self.model_config['endpoint']}"
         
-        # Map model name to API format
-        api_model = self.model.lower().replace(" ", "-")
-        if self.model == "Claude Opus 4":
-            api_model = "claude-3-opus-20240229"  # API still uses old format
-        elif self.model == "Claude Sonnet 4":
-            api_model = "claude-3-sonnet-20240229"
-        elif self.model == "Claude 3.5 Haiku":
-            api_model = "claude-3-haiku-20240307"
-        
         data = {
-            "model": api_model,
+            "model": self.model,
             "max_tokens": min(self.max_tokens, self.model_config["max_tokens"]),
             "messages": [{"role": "user", "content": prompt}]
         }
-        
-        # Enable extended thinking for Opus 4
-        if self.model == "Claude Opus 4":
-            data["thinking"] = True
         
         return self._make_request(url, data)
     
     def _call_gemini(self, prompt: str) -> Dict[str, Any]:
         """Make API call to Google Gemini"""
-        # Map model name to API format
-        api_model = self.model.lower().replace(" ", "-")
-        if self.model == "Gemini 2.5 Pro":
-            api_model = "gemini-1.5-pro"  # API still uses old format
-        elif self.model == "Gemini 2.0 Flash":
-            api_model = "gemini-1.5-flash"
-        
-        url = f"{self.api_base}/models/{api_model}:{self.model_config['endpoint']}"
+        url = f"{self.api_base}/models/{self.model}:{self.model_config['endpoint']}"
         
         # Add API key as query parameter
         url += f"?key={self.api_key}"
@@ -280,10 +244,6 @@ SEVERITY: [low/medium/high]"""
                 "temperature": 0.1
             }
         }
-        
-        # Enable Deep Think for Pro models
-        if "Pro" in self.model:
-            data["generationConfig"]["deepThink"] = True
         
         # Remove Authorization header for Gemini
         headers = {k: v for k, v in self.headers.items() if k != "Authorization"}

@@ -29,15 +29,16 @@ if [[ -n "${BUILDKITE_REPO}" ]]; then
     # Extract the repo path from the URL
     REPO_PATH=$(echo "${BUILDKITE_REPO}" | sed -E 's|https://github.com/||; s|\.git$||')
     
-    # Configure git to use the token as a credential helper
-    git config --global credential.helper store
-    echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
-    
-    # Also set the authorization header
-    git config --global http.https://github.com/.extraheader "Authorization: Bearer ${GITHUB_TOKEN}"
+    # Use the token in the URL for authentication
+    # GitHub accepts tokens as username with 'x-oauth-basic' as password
+    AUTHENTICATED_REPO="https://${GITHUB_TOKEN}:x-oauth-basic@github.com/${REPO_PATH}"
     
     echo "Using GitHub token for authentication"
-    AUTHENTICATED_REPO="${BUILDKITE_REPO}"
+    # Debug: Show token info without exposing it
+    if [[ "${AI_ERROR_ANALYSIS_DEBUG:-false}" == "true" ]]; then
+      echo "Token length: ${#GITHUB_TOKEN} characters"
+      echo "Token prefix: ${GITHUB_TOKEN:0:4}..."
+    fi
   else
     AUTHENTICATED_REPO="${BUILDKITE_REPO}"
   fi

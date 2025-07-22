@@ -29,6 +29,17 @@ if [[ "${COMMAND_EXIT_STATUS}" -eq 0 ]]; then
   exit 0
 fi
 
+# Capture the last command output from Buildkite
+# Note: Buildkite doesn't provide direct access to command output in hooks
+# We'll use the command itself and any error context available
+COMMAND_OUTPUT=""
+if [[ -n "${BUILDKITE_LAST_HOOK_EXIT_STATUS:-}" ]]; then
+  COMMAND_OUTPUT="Exit status: ${BUILDKITE_LAST_HOOK_EXIT_STATUS}"
+fi
+
+# Try to get the actual command that was run
+ACTUAL_COMMAND="${BUILDKITE_COMMAND:-Unknown command}"
+
 # Configuration with security validation
 PROVIDER="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER:-}"
 MODEL="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MODEL:-}"
@@ -282,7 +293,11 @@ analyze_error() {
     "pipeline": "${BUILDKITE_PIPELINE_SLUG:-unknown}",
     "pipeline_name": "${BUILDKITE_PIPELINE_NAME:-${BUILDKITE_PIPELINE_SLUG:-unknown}}"
   },
-  "log_excerpt": "$(tail -n 100 /tmp/buildkite.log 2>/dev/null | head -c 5000 | sed 's/"/\\"/g' | tr '\n' ' ' || echo 'Log not available')",
+  "log_excerpt": $(if [[ -f "${AI_ERROR_ANALYSIS_OUTPUT_FILE:-}" ]]; then
+    tail -n 200 "${AI_ERROR_ANALYSIS_OUTPUT_FILE}" | head -c 10000 | jq -Rs .
+  else
+    echo "Command: ${BUILDKITE_COMMAND:-No command available}" | jq -Rs .
+  fi),
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF

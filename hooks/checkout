@@ -1,0 +1,117 @@
+#!/bin/bash
+set +e  # Don't exit on error - we want to capture and analyze failures
+
+# AI Error Analysis Buildkite Plugin - Checkout Hook
+# This hook wraps the checkout process to analyze failures
+
+# Check if plugin was initialized
+if [[ "${AI_ERROR_ANALYSIS_INITIALIZED:-false}" != "true" ]]; then
+  # Source environment hook first
+  if [[ -f "/buildkite/hooks/environment" ]]; then
+    source /buildkite/hooks/environment
+  fi
+fi
+
+LOG_PREFIX="${AI_ERROR_ANALYSIS_LOG_PREFIX:-🤖 [AI Error Analysis]}"
+PLUGIN_DIR="${AI_ERROR_ANALYSIS_PLUGIN_DIR:-/buildkite/plugins/ai-error-analysis}"
+
+echo "--- ${LOG_PREFIX} Monitoring checkout process"
+
+# Capture the standard checkout command output
+CHECKOUT_LOG=$(mktemp /tmp/checkout-log.XXXXXX)
+
+# Run the default checkout with output capture
+if [[ -n "${BUILDKITE_REPO}" ]]; then
+  echo "Cloning ${BUILDKITE_REPO}..."
+  
+  # Buildkite's default checkout command
+  if git clone -c "http.extraheader=${BUILDKITE_GIT_CLONE_FLAGS:-}" -- "${BUILDKITE_REPO}" . 2>&1 | tee "${CHECKOUT_LOG}"; then
+    CHECKOUT_EXIT_STATUS=0
+  else
+    CHECKOUT_EXIT_STATUS=$?
+  fi
+else
+  echo "No repository configured"
+  CHECKOUT_EXIT_STATUS=0
+fi
+
+# If checkout failed, analyze the error
+if [[ ${CHECKOUT_EXIT_STATUS} -ne 0 ]]; then
+  echo "--- ${LOG_PREFIX} Analyzing checkout failure"
+  
+  # Prepare context for analysis
+  CONTEXT_FILE=$(mktemp /tmp/ai-context.XXXXXX.json)
+  
+  # Create context JSON
+  cat > "${CONTEXT_FILE}" << EOF
+{
+  "build_info": {
+    "pipeline": "${BUILDKITE_PIPELINE_NAME:-unknown}",
+    "branch": "${BUILDKITE_BRANCH:-unknown}",
+    "command": "git clone ${BUILDKITE_REPO}",
+    "exit_status": ${CHECKOUT_EXIT_STATUS},
+    "phase": "checkout"
+  },
+  "log_excerpt": $(cat "${CHECKOUT_LOG}" | tail -100 | jq -Rs .)
+}
+EOF
+
+  # Run AI analysis
+  ANALYSIS_OUTPUT=$(mktemp /tmp/ai-analysis.XXXXXX.json)
+  
+  # Set API key for the analysis
+  export AI_ERROR_ANALYSIS_API_KEY="${ANTHROPIC_API_KEY:-${OPENAI_API_KEY:-${GOOGLE_API_KEY:-}}}"
+  
+  if python3 "${PLUGIN_DIR}/lib/analyze.py" \
+    --provider "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER:-anthropic}" \
+    --model "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MODEL:-claude-opus-4-20250514}" \
+    --max-tokens "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MAX_TOKENS:-1000}" \
+    --input "${CONTEXT_FILE}" \
+    --output "${ANALYSIS_OUTPUT}"; then
+    
+    # Display analysis results
+    echo "--- ${LOG_PREFIX} AI Analysis Results"
+    
+    if [[ -f "${ANALYSIS_OUTPUT}" ]]; then
+      # Extract and format the analysis
+      ROOT_CAUSE=$(jq -r '.analysis.root_cause // "Unknown"' "${ANALYSIS_OUTPUT}")
+      CONFIDENCE=$(jq -r '.analysis.confidence // 0' "${ANALYSIS_OUTPUT}")
+      SEVERITY=$(jq -r '.analysis.severity // "unknown"' "${ANALYSIS_OUTPUT}")
+      
+      echo "🔍 Root Cause (${CONFIDENCE}% confidence, ${SEVERITY} severity):"
+      echo "${ROOT_CAUSE}"
+      echo ""
+      echo "💡 Suggested Fixes:"
+      jq -r '.analysis.suggested_fixes[]? // empty' "${ANALYSIS_OUTPUT}" | while read -r fix; do
+        echo "  • ${fix}"
+      done
+      echo ""
+      echo "📊 Analysis by: $(jq -r '.provider // "unknown"' "${ANALYSIS_OUTPUT}") $(jq -r '.model // ""' "${ANALYSIS_OUTPUT}")"
+      
+      # Create annotation
+      if command -v buildkite-agent &> /dev/null; then
+        ANNOTATION_CONTENT="## 🤖 AI Error Analysis - Checkout Failure\\n\\n"
+        ANNOTATION_CONTENT+="**Root Cause:** ${ROOT_CAUSE}\\n\\n"
+        ANNOTATION_CONTENT+="**Suggested Fixes:**\\n"
+        jq -r '.analysis.suggested_fixes[]? // empty' "${ANALYSIS_OUTPUT}" | while read -r fix; do
+          ANNOTATION_CONTENT+="- ${fix}\\n"
+        done
+        ANNOTATION_CONTENT+="\\n**Confidence:** ${CONFIDENCE}% | **Severity:** ${SEVERITY}"
+        ANNOTATION_CONTENT+="\\n**Provider:** $(jq -r '.provider // "unknown"' "${ANALYSIS_OUTPUT}") ($(jq -r '.model // ""' "${ANALYSIS_OUTPUT}"))"
+        
+        echo -e "${ANNOTATION_CONTENT}" | buildkite-agent annotate --style "error" --context "ai-checkout-analysis"
+      fi
+    fi
+  else
+    echo "❌ AI analysis failed"
+  fi
+  
+  # Cleanup
+  rm -f "${CONTEXT_FILE}" "${ANALYSIS_OUTPUT}"
+fi
+
+# Cleanup
+rm -f "${CHECKOUT_LOG}"
+
+# Exit with the original checkout status
+exit ${CHECKOUT_EXIT_STATUS}

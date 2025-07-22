@@ -11,15 +11,48 @@
 
 ## Supported AI Providers
 
+### Latest 2025 Models
+
+| Provider | Model | Context Window | Key Features |
+|----------|-------|----------------|--------------|
+| **Anthropic** | `claude-opus-4-20250514` | 200K tokens | Best coding model (72.5% SWE-bench), extended thinking |
+| **Anthropic** | `claude-sonnet-4-20250514` | 200K tokens | Balanced performance, hybrid reasoning |
+| **OpenAI** | `gpt-4.1` | 1M tokens | Latest flagship, superior coding & instruction following |
+| **OpenAI** | `gpt-4.1-mini` | 1M tokens | 83% cost reduction vs GPT-4o, beats GPT-4o in benchmarks |
+| **Google** | `gemini-2.0-flash` | 1M tokens | Generally available, multimodal, native tools |
+| **Google** | `gemini-2.0-pro-exp` | 2M tokens | Experimental, best coding performance |
+
+### All Supported Models
+
 | Provider | Models | Authentication | Notes |
 |----------|--------|----------------|-------|
 | **OpenAI** | `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `gpt-4o-mini` | Bearer token | GPT-4.1 series are the newest with 1M token context |
-| **Anthropic** | `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022` | x-api-key header | Claude Opus 4 is the most capable model |
+| **Anthropic** | `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`, `claude-3-opus-20240229` | x-api-key header | Claude Opus 4 is the most capable model |
 | **Google** | `gemini-2.0-flash`, `gemini-2.0-pro-exp`, `gemini-1.5-pro`, `gemini-1.5-flash` | API key parameter | Gemini 2.0 Flash is GA, 2.0 Pro is experimental |
 
 ## Quick Start
 
-### 1. External Secret Management (Required)
+### For Local Development/Testing
+
+If you're setting up the plugin locally or with Docker/OrbStack:
+
+1. **Copy and configure `.env` file**:
+```bash
+cp .env.example .env
+# Edit .env with your credentials:
+# - BUILDKITE_AGENT_TOKEN
+# - ANTHROPIC_API_KEY (or OPENAI_API_KEY, GOOGLE_API_KEY)
+# - GITHUB_TOKEN (for private repos)
+```
+
+2. **Run with Docker**:
+```bash
+docker-compose -f docker-compose.orbstack.yml up -d --build
+```
+
+See [Environment Configuration](#environment-configuration-env) for detailed setup.
+
+### 1. External Secret Management (Production)
 
 **AWS Secrets Manager (Recommended)**
 ```yaml
@@ -180,7 +213,7 @@ temperature: 0.1
 
 ```yaml
 provider: anthropic
-model: "claude-3-5-sonnet-20241022"  # or other models below
+model: "claude-opus-4-20250514"  # or other models below
 secret_source:
   type: vault
   vault_path: secret/buildkite/claude-key
@@ -334,8 +367,11 @@ steps:
 | OpenAI | gpt-4o-mini | $0.005-0.015 | Balanced quality/cost |
 | Anthropic | claude-3-5-haiku-20241022 | $0.008-0.020 | Fast Claude responses |
 | Google | gemini-1.5-pro | $0.010-0.030 | Production workloads |
-| Anthropic | claude-3-5-sonnet-20241022 | $0.015-0.045 | Best balance of capability |
+| Anthropic | claude-3-5-sonnet-20241022 | $0.015-0.045 | Balanced capability |
+| Anthropic | claude-sonnet-4-20250514 | $0.020-0.050 | Enhanced reasoning |
 | OpenAI | gpt-4o | $0.020-0.080 | Multimodal analysis |
+| OpenAI | gpt-4.1 | $0.030-0.100 | Latest with 1M context |
+| Anthropic | claude-opus-4-20250514 | $0.050-0.150 | Best coding & complex tasks |
 
 ### Cost Reduction Features
 - **Caching**: Avoid duplicate analyses (60%+ savings)
@@ -349,6 +385,84 @@ steps:
 - Python 3.10+ (3.12 recommended)
 - Docker for testing
 - External secret management system
+- GitHub personal access token (for private repos)
+
+### Environment Configuration (.env)
+
+The plugin requires environment variables to be configured. Copy `.env.example` to `.env` and update with your credentials:
+
+```bash
+cp .env.example .env
+```
+
+#### Required Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `BUILDKITE_AGENT_TOKEN` | Your Buildkite agent token | `bkua_xxxxxxxxxxxxx` |
+| `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` or `GOOGLE_API_KEY` | API key for your chosen AI provider | `sk-ant-api03-xxxxx` |
+
+#### Optional Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AI_PROVIDER` | AI provider to use | `anthropic` |
+| `AI_MODEL` | Specific model to use | Provider default |
+| `AI_MAX_TOKENS` | Maximum tokens for analysis | `2000` |
+| `AI_ENABLE_CACHING` | Cache analysis results | `true` |
+| `AI_DEBUG` | Enable debug logging | `false` |
+| `GITHUB_TOKEN` | GitHub personal access token for private repos | None |
+| `BUILDKITE_AGENT_NAME` | Agent name | `orbstack-claude-agent` |
+| `BUILDKITE_AGENT_TAGS` | Agent tags | `queue=default,os=linux,...` |
+
+#### GitHub Access Token Setup
+
+If your Buildkite pipelines need to clone private GitHub repositories:
+
+1. **Generate a GitHub Personal Access Token**:
+   - Go to https://github.com/settings/tokens
+   - Click "Generate new token (classic)"
+   - Give it a descriptive name (e.g., "Buildkite Agent")
+   - Select the `repo` scope for private repository access
+   - Click "Generate token"
+   - Copy the token immediately (you won't see it again)
+
+2. **Add to your `.env` file**:
+   ```bash
+   GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+   ```
+
+3. **Security Notes**:
+   - Never commit `.env` files to version control
+   - Add `.env` to your `.gitignore`
+   - Rotate tokens regularly
+   - Use minimal required scopes
+
+#### Example `.env` File
+
+```bash
+# Buildkite Configuration
+BUILDKITE_AGENT_TOKEN=bkua_1234567890abcdef
+
+# AI Provider Configuration (choose one)
+ANTHROPIC_API_KEY=sk-ant-api03-xxxxxxxxxxxxx
+# OPENAI_API_KEY=sk-xxxxxxxxxxxxx
+# GOOGLE_API_KEY=AIzaxxxxxxxxxxxxx
+
+# Plugin Settings
+AI_PROVIDER=anthropic
+AI_MODEL=claude-opus-4-20250514
+AI_MAX_TOKENS=2000
+AI_ENABLE_CACHING=true
+AI_DEBUG=false
+
+# GitHub Access (for private repos)
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxx
+
+# Agent Configuration
+BUILDKITE_AGENT_NAME=my-ai-agent
+BUILDKITE_AGENT_TAGS=queue=default,os=linux,ai-error-analysis=enabled
+```
 
 ### Local Testing
 
@@ -378,6 +492,32 @@ export BUILDKITE_COMMAND="npm test"
 ./hooks/post-command
 ```
 
+### Docker/OrbStack Setup
+
+For containerized deployment using Docker or OrbStack:
+
+1. **Ensure `.env` file is configured** (see Environment Configuration above)
+
+2. **Build and run with docker-compose**:
+```bash
+# For OrbStack users
+docker-compose -f docker-compose.orbstack.yml up -d --build
+
+# For standard Docker
+docker-compose -f docker/docker-compose.yml up -d --build
+```
+
+3. **Verify agent is running**:
+```bash
+docker logs buildkite-agent-ai-analysis
+```
+
+4. **Important Notes**:
+- The `.env` file is automatically loaded by docker-compose
+- GitHub token is passed to the container for private repo access
+- AI provider credentials are securely passed as environment variables
+- Never include `.env` in Docker images or commits
+
 ### Testing Framework
 
 ```bash
@@ -404,6 +544,17 @@ aws secretsmanager get-secret-value --secret-id buildkite/openai-key
 # Enable debug mode
 export BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_DEBUG=true
 ```
+
+**GitHub clone failures (private repos)**:
+- Ensure `GITHUB_TOKEN` is set in your `.env` file
+- Verify token has `repo` scope for private repositories
+- Check token hasn't expired
+- Test with: `curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user`
+
+**Container not starting**:
+- Check `.env` file exists and has valid `BUILDKITE_AGENT_TOKEN`
+- Verify AI provider API key is set (ANTHROPIC_API_KEY, etc.)
+- Check logs: `docker logs buildkite-agent-ai-analysis`
 
 **API errors**:
 - Verify correct 2025 model names

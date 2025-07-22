@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+
+# AI Error Analysis Buildkite Plugin - Command Hook
+# This hook wraps the command execution to capture output for analysis
+
+# Plugin configuration
+if [[ -d "/buildkite/plugins/ai-error-analysis" ]]; then
+  PLUGIN_DIR="/buildkite/plugins/ai-error-analysis"
+else
+  PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+
+LOG_PREFIX="🤖 [AI Error Analysis]"
+OUTPUT_FILE="/tmp/buildkite-command-output-$$.log"
+
+echo "--- ${LOG_PREFIX} Command wrapper active"
+
+# Create a wrapper script that captures output
+cat > /tmp/command-wrapper.sh << 'EOF'
+#!/bin/bash
+OUTPUT_FILE="$1"
+shift
+
+# Execute the command and capture output
+exec > >(tee -a "$OUTPUT_FILE")
+exec 2>&1
+
+# Run the actual command
+eval "$@"
+EXIT_CODE=$?
+
+# Save exit code
+echo "BUILDKITE_COMMAND_EXIT_STATUS=$EXIT_CODE" >> "$OUTPUT_FILE.meta"
+
+exit $EXIT_CODE
+EOF
+
+chmod +x /tmp/command-wrapper.sh
+
+# Execute the command with output capture
+echo "Executing command with output capture..."
+/tmp/command-wrapper.sh "$OUTPUT_FILE" "$BUILDKITE_COMMAND"
+COMMAND_EXIT_STATUS=$?
+
+# Export the output file location for post-command hook
+export AI_ERROR_ANALYSIS_OUTPUT_FILE="$OUTPUT_FILE"
+
+# Clean up
+rm -f /tmp/command-wrapper.sh
+
+# Exit with the original command status
+exit $COMMAND_EXIT_STATUS

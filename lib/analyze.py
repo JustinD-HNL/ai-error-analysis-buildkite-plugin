@@ -176,29 +176,39 @@ class AIAnalyzer:
         build_info = context.get("build_info", {})
         log_excerpt = context.get("log_excerpt", "")
         
-        prompt = f"""Analyze this CI/CD build failure and provide actionable insights.
+        prompt = f"""You are an expert DevOps engineer analyzing a CI/CD build failure. Provide specific, actionable solutions based on the error logs.
 
 BUILD INFORMATION:
 - Pipeline: {build_info.get('pipeline', 'unknown')}
 - Branch: {build_info.get('branch', 'unknown')}
 - Command: {build_info.get('command', 'unknown')}
 - Exit Status: {build_info.get('exit_status', 'unknown')}
+- Phase: {build_info.get('phase', 'command')}
 
-LOG EXCERPT:
-{log_excerpt[:3000]}  # Limit log size
+ERROR LOG (last 100 lines):
+```
+{log_excerpt[:5000]}  # Increased log size
+```
 
-ANALYSIS REQUEST:
-Please provide your analysis in the following format:
+ANALYSIS INSTRUCTIONS:
+Analyze the error logs carefully and provide your response in EXACTLY this format:
 
-ROOT CAUSE: [Explain what specifically went wrong in 1-2 sentences]
+ROOT CAUSE: [Write a complete 1-2 sentence explanation of what specifically caused the failure. Be detailed and specific to this error.]
 
 SUGGESTED FIXES:
-- [First specific, actionable solution]
-- [Second specific, actionable solution]
-- [Third specific, actionable solution]
+- [Specific fix #1: Include exact commands, configuration changes, or code modifications needed]
+- [Specific fix #2: Provide alternative solution with concrete steps]
+- [Specific fix #3: Include debugging steps or verification commands]
 
-CONFIDENCE: [A number 0-100]%
-SEVERITY: [low/medium/high]"""
+CONFIDENCE: [0-100]%
+SEVERITY: [low/medium/high]
+
+Important:
+- Focus on the actual error messages in the logs
+- Provide specific commands or configuration changes
+- If it's a git/GitHub authentication error, suggest exact steps to fix it
+- If it's a database connection error, provide specific troubleshooting steps
+- Always complete your ROOT CAUSE sentence - do not cut it off"""
         
         return prompt
     
@@ -320,10 +330,17 @@ SEVERITY: [low/medium/high]"""
         if os.getenv("AI_DEBUG", "false").lower() == "true":
             print(f"DEBUG: Raw AI response:\n{content[:500]}", file=sys.stderr)
         
-        # Extract root cause
-        root_cause_match = re.search(r"ROOT CAUSE[:\s]*(.+?)(?=SUGGESTED|CONFIDENCE|SEVERITY|\n\n|$)", content, re.DOTALL | re.IGNORECASE)
+        # Extract root cause - handle multiline better
+        root_cause_match = re.search(r"ROOT CAUSE[:\s]*(.+?)(?=\n\s*SUGGESTED|$)", content, re.DOTALL | re.IGNORECASE)
         if root_cause_match:
-            analysis["root_cause"] = root_cause_match.group(1).strip().replace('\n', ' ')
+            # Clean up the root cause text
+            root_cause = root_cause_match.group(1).strip()
+            # Replace multiple spaces/newlines with single space
+            root_cause = re.sub(r'\s+', ' ', root_cause)
+            # Ensure it's not truncated
+            if root_cause and not root_cause.endswith('.'):
+                root_cause += '.'
+            analysis["root_cause"] = root_cause
         
         # Extract suggested fixes
         fixes_match = re.search(r"SUGGESTED FIXES?[:\s]*(.+?)(?=CONFIDENCE|SEVERITY|$)", content, re.DOTALL | re.IGNORECASE)

@@ -41,7 +41,9 @@ ENV BUILDKITE_BUILD_PATH="/buildkite/builds"
 RUN mkdir -p /buildkite/hooks && \
     ln -sf /buildkite/plugins/ai-error-analysis/hooks/post-command /buildkite/hooks/post-command && \
     ln -sf /buildkite/plugins/ai-error-analysis/hooks/environment /buildkite/hooks/environment && \
-    ln -sf /buildkite/plugins/ai-error-analysis/hooks/pre-exit /buildkite/hooks/pre-exit
+    ln -sf /buildkite/plugins/ai-error-analysis/hooks/pre-exit /buildkite/hooks/pre-exit && \
+    ln -sf /buildkite/plugins/ai-error-analysis/hooks/checkout /buildkite/hooks/checkout && \
+    ln -sf /buildkite/plugins/ai-error-analysis/hooks/command /buildkite/hooks/command
 
 # Create startup script
 RUN echo '#!/bin/bash\n\

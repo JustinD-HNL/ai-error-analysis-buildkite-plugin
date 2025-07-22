@@ -111,41 +111,81 @@ Multi-layered security approach:
 ai-error-analysis-buildkite-plugin/
 │
 ├── hooks/                      # Buildkite lifecycle hooks
+│   ├── checkout               # Checkout hook
+│   ├── command                # Command hook
 │   ├── environment            # Pre-execution setup and validation
 │   ├── post-command           # Main analysis trigger
-│   └── pre-exit              # Cleanup and finalization
+│   ├── pre-exit               # Cleanup and finalization
+│   └── simplified-post-command # Simplified post-command variant
 │
 ├── lib/                       # Core Python modules
-│   ├── __init__.py           # Package initialization
-│   ├── analyze.py            # AI analysis orchestrator
 │   ├── ai_providers.py       # Provider abstraction layer
+│   ├── analyze.py            # AI analysis orchestrator
 │   ├── cache_manager.py      # Caching implementation
+│   ├── context_builder.py    # Build context collection
+│   ├── error_detector.py     # Error detection logic
+│   ├── health_check.py       # Health monitoring
 │   ├── log_sanitizer.py      # Security sanitization
-│   └── report_generator.py   # Report formatting engine
+│   ├── report_generator.py   # Report formatting engine
+│   └── utils.sh              # Bash utility functions
 │
 ├── docker/                    # Container configurations
 │   ├── Dockerfile            # Main container image
+│   ├── README-DOCKER.md      # Docker documentation
+│   ├── deploy.sh             # Deployment script
+│   ├── docker-build.sh       # Build script
 │   ├── docker-compose.yml    # Standard deployment
-│   └── docker-compose.orbstack.yml # OrbStack deployment
+│   ├── docker-run.sh         # Run script
+│   └── kubernetes-deployment.yaml # K8s deployment
 │
 ├── testing/                   # Test scripts and pipelines
+│   ├── README.md             # Testing documentation
 │   ├── test-*.sh             # Test scripts
-│   ├── *-pipeline.yml        # Test pipeline configurations
-│   └── README.md             # Testing documentation
+│   └── *-pipeline.yml        # Test pipeline configurations
 │
-├── tests/                     # Test suite (future)
-│   ├── unit/                 # Unit tests
-│   ├── integration/          # Integration tests
-│   └── fixtures/             # Test data
+├── tests/                     # Test suite
+│   ├── fixtures/             # Test data
+│   │   ├── sample_logs.txt
+│   │   └── test_config.env
+│   ├── lib/                  # Library tests
+│   │   └── context_builder.bats
+│   ├── python/               # Python tests
+│   │   ├── test_ai_providers.py
+│   │   ├── test_cache_manager.py
+│   │   ├── test_core_functions.py
+│   │   ├── test_e2e.py
+│   │   ├── test_error_detector.py
+│   │   ├── test_provider_integration.py
+│   │   └── test_secret_management.py
+│   ├── environment.bats      # Environment hook tests
+│   ├── hooks.bats            # General hook tests
+│   ├── post-command.bats     # Post-command hook tests
+│   └── pre-exit.bats         # Pre-exit hook tests
 │
 ├── docs/                      # Documentation
-│   ├── ARCHITECTURE.md       # This file
-│   ├── ORBSTACK-README.md    # OrbStack setup guide
-│   └── API.md               # API documentation
+│   ├── TESTING.md            # Testing guide
+│   ├── configuration.md      # Configuration reference
+│   └── examples.md           # Usage examples
 │
+├── ARCHITECTURE.md           # This file (architecture documentation)
+├── CHANGELOG.md              # Version history
+├── CONTRIBUTING.md           # Contribution guidelines
+├── Dockerfile.orbstack       # OrbStack-specific Dockerfile
+├── Dockerfile.test           # Testing Dockerfile
+├── LICENSE                   # License file
+├── Makefile                  # Build automation
+├── ORBSTACK-README.md        # OrbStack setup guide
+├── README.md                 # Project overview
+├── docker-compose.orbstack.yml # OrbStack deployment
+├── example_pipeline.yml      # Example Buildkite pipeline
+├── orbstack-setup.md         # OrbStack setup instructions
 ├── plugin.yml                # Buildkite plugin definition
+├── pytest.ini                # Pytest configuration
+├── requirements-dev.txt      # Development dependencies
 ├── requirements.txt          # Python dependencies
-└── README.md                # Project overview
+├── setup-ssh.sh              # SSH setup script
+├── skip-checkout-pipeline.yml # Skip checkout pipeline example
+└── to_fix.md                 # Known issues tracker
 ```
 
 ## Data Flow
@@ -257,7 +297,29 @@ The plugin handles sensitive data including:
 
 ## Source File Documentation
 
-### `/hooks/environment`
+### Hook Scripts
+
+#### `/hooks/checkout`
+**Purpose**: Custom checkout hook for repository operations
+
+**Key Functions**:
+- Repository cloning and setup
+- Git configuration management
+- SSH key setup if needed
+
+**Why**: Provides custom checkout behavior when needed by the plugin
+
+#### `/hooks/command`
+**Purpose**: Command execution hook for custom command handling
+
+**Key Functions**:
+- Command wrapper functionality
+- Environment preparation for commands
+- Command execution monitoring
+
+**Why**: Allows plugin to wrap or modify command execution
+
+#### `/hooks/environment`
 **Purpose**: Pre-execution environment setup and validation
 
 **Key Functions**:
@@ -268,7 +330,7 @@ The plugin handles sensitive data including:
 
 **Why**: Fails fast if configuration is invalid, preventing wasted compute time
 
-### `/hooks/post-command`
+#### `/hooks/post-command`
 **Purpose**: Main plugin logic triggered after command execution
 
 **Key Functions**:
@@ -279,7 +341,7 @@ The plugin handles sensitive data including:
 
 **Why**: Central orchestrator that coordinates all plugin operations
 
-### `/hooks/pre-exit`
+#### `/hooks/pre-exit`
 **Purpose**: Cleanup operations ensuring no sensitive data persists
 
 **Key Functions**:
@@ -289,7 +351,19 @@ The plugin handles sensitive data including:
 
 **Why**: Security best practice to minimize data exposure window
 
-### `/lib/analyze.py`
+#### `/hooks/simplified-post-command`
+**Purpose**: Lightweight alternative to post-command for simple use cases
+
+**Key Functions**:
+- Minimal error analysis without full context
+- Reduced dependencies for faster execution
+- Basic annotation creation
+
+**Why**: Provides a faster, simpler option for basic error analysis
+
+### Python Modules
+
+#### `/lib/analyze.py`
 **Purpose**: Core AI analysis engine with provider abstraction
 
 **Key Classes**:
@@ -303,12 +377,12 @@ The plugin handles sensitive data including:
 
 **Why**: Centralizes AI logic, making it easy to add new providers
 
-### `/lib/ai_providers.py`
+#### `/lib/ai_providers.py`
 **Purpose**: Legacy provider interface (being phased out)
 
 **Note**: Functionality being merged into `analyze.py` for simplification
 
-### `/lib/cache_manager.py`
+#### `/lib/cache_manager.py`
 **Purpose**: Intelligent caching to reduce API costs
 
 **Key Classes**:
@@ -322,7 +396,51 @@ The plugin handles sensitive data including:
 
 **Why**: Prevents duplicate API calls for identical failures, saving costs
 
-### `/lib/log_sanitizer.py`
+#### `/lib/context_builder.py`
+**Purpose**: Collects and structures build context for analysis
+
+**Key Classes**:
+- `ContextBuilder`: Main context collection class
+- `BuildContext`: Structured context container
+
+**Key Methods**:
+- `build_context()`: Aggregates all build information
+- `get_git_info()`: Retrieves Git metadata
+- `get_pipeline_info()`: Extracts pipeline configuration
+- `get_environment_info()`: Collects environment variables
+
+**Why**: Provides comprehensive context for more accurate AI analysis
+
+#### `/lib/error_detector.py`
+**Purpose**: Identifies and classifies different types of errors
+
+**Key Classes**:
+- `ErrorDetector`: Main error detection engine
+- `ErrorPattern`: Pattern matching for error types
+
+**Key Methods**:
+- `detect_error_type()`: Classifies the type of error
+- `extract_error_message()`: Pulls out key error messages
+- `get_stack_trace()`: Extracts relevant stack traces
+
+**Why**: Helps AI focus on the most relevant parts of the failure
+
+#### `/lib/health_check.py`
+**Purpose**: Monitors plugin health and dependencies
+
+**Key Classes**:
+- `HealthChecker`: Main health monitoring class
+- `HealthStatus`: Health status container
+
+**Key Methods**:
+- `check_all()`: Runs all health checks
+- `check_python_version()`: Validates Python compatibility
+- `check_dependencies()`: Verifies required packages
+- `check_api_connectivity()`: Tests API provider access
+
+**Why**: Ensures plugin is functioning correctly before analysis
+
+#### `/lib/log_sanitizer.py`
 **Purpose**: Comprehensive security sanitization
 
 **Key Classes**:
@@ -337,7 +455,7 @@ The plugin handles sensitive data including:
 
 **Why**: Critical security component preventing secret leakage
 
-### `/lib/report_generator.py`
+#### `/lib/report_generator.py`
 **Purpose**: Flexible report generation in multiple formats
 
 **Key Classes**:
@@ -350,6 +468,17 @@ The plugin handles sensitive data including:
 - **JSON**: For programmatic access
 
 **Why**: Provides flexibility in how results are consumed
+
+#### `/lib/utils.sh`
+**Purpose**: Shared Bash utility functions
+
+**Key Functions**:
+- `log_debug()`: Debug logging with timestamp
+- `log_error()`: Error logging with formatting
+- `check_command()`: Validates command availability
+- `sanitize_output()`: Basic output sanitization
+
+**Why**: Provides consistent utilities across all Bash scripts
 
 ## Configuration Management
 

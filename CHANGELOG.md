@@ -8,31 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial plugin development in progress
+- Support for Claude Opus 4 (claude-opus-4-20250514) - the most capable coding model
+- Support for Claude Sonnet 4 (claude-sonnet-4-20250514)
+- Support for OpenAI GPT-4.1 and GPT-4.1-mini with 1M token context window
+- Support for Google Gemini 2.0 Flash and Pro models
+- Enhanced AI prompts for better GitHub authentication error detection
+- Improved checkout hook with GitHub token authentication support
+- Command output capture for better error analysis
+- Debug mode for troubleshooting authentication issues
 
 ### Changed
-- N/A
-
-### Deprecated
-- N/A
-
-### Removed
-- N/A
+- Updated AI analysis prompts to be more specific about common errors
+- Improved error categorization and root cause detection
+- Enhanced security settings in docker-compose.orbstack.yml
+- Updated Python requirement to 3.10+ (3.11 recommended)
 
 ### Fixed
-- N/A
+- Git clone failures now properly detected in checkout hook using pipefail
+- GitHub authentication errors now provide specific, actionable fixes
+- AI no longer suggests generic "network issues" for authentication failures
+- Container now properly receives GitHub token from environment
+- Fixed truncated AI analysis output
 
-### Security
-- N/A
-
-## [1.0.0] - 2025-01-XX
+## [1.0.0] - 2025-01-20
 
 ### Added
 - 🎉 **Initial release** of AI Error Analysis Buildkite Plugin
 - 🤖 **Multi-AI Provider Support**:
-  - OpenAI GPT (GPT-4o, GPT-4o-mini, GPT-3.5-turbo)
-  - Anthropic Claude (Claude-3-Haiku, Claude-3-Sonnet, Claude-3-Opus)
-  - Google Gemini (Gemini-1.5-Flash, Gemini-1.5-Pro)
+  - OpenAI GPT (GPT-4o, GPT-4o-mini, GPT-4.1, GPT-4.1-mini)
+  - Anthropic Claude (Claude-3.5-Haiku, Claude-3.5-Sonnet, Claude-3-Opus, Claude Opus 4, Claude Sonnet 4)
+  - Google Gemini (Gemini-1.5-Flash, Gemini-1.5-Pro, Gemini-2.0-Flash, Gemini-2.0-Pro)
   - Automatic fallback between providers
 - 🔍 **Intelligent Error Detection**:
   - Pattern recognition for compilation errors, test failures, dependency issues
@@ -161,7 +166,7 @@ This initial release brings comprehensive AI-powered error analysis to Buildkite
 steps:
   - command: "npm test"
     plugins:
-      - your-org/ai-error-analysis#v1.0.0: ~
+      - JustinD-HNL/ai-error-analysis#v1.0.0: ~
 ```
 
 **Migration from Beta:**
@@ -191,8 +196,8 @@ steps:
 
 For questions, bug reports, or feature requests:
 - 📚 **Documentation**: [Plugin README](README.md)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/your-org/ai-error-analysis-buildkite-plugin/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/your-org/ai-error-analysis-buildkite-plugin/discussions)
+- 🐛 **Issues**: [GitHub Issues](https://github.com/JustinD-HNL/ai-error-analysis-buildkite-plugin/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/JustinD-HNL/ai-error-analysis-buildkite-plugin/discussions)
 - 📧 **Enterprise Support**: Contact your Buildkite representative
 
 ## Contributing

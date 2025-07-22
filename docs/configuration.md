@@ -6,7 +6,7 @@ Complete configuration reference for the AI Error Analysis Buildkite Plugin.
 
 - [Basic Configuration](#basic-configuration)
 - [AI Provider Configuration](#ai-provider-configuration)
-- [Trigger Configuration](#trigger-configuration)
+- [Secret Management](#secret-management)
 - [Context Configuration](#context-configuration)
 - [Security Configuration](#security-configuration)
 - [Output Configuration](#output-configuration)
@@ -40,105 +40,130 @@ steps:
   - command: "npm test"
     plugins:
       - your-org/ai-error-analysis#v1.0.0:
-          # Use different AI model
-          ai_providers:
-            - name: openai
-              model: gpt-4o
+          # Specify AI provider
+          provider: openai
           
-          # Only analyze failures on main branch
-          conditions:
-            branches: ["main"]
+          # Use specific model (optional)
+          model: gpt-4o
+          
+          # Basic parameters
+          max_tokens: 1000
+          temperature: 0.1
 ```
 
 ## AI Provider Configuration
 
-### Single Provider
+### Single Provider (Simple)
 
 ```yaml
-ai_providers:
-  - name: openai
-    model: gpt-4o-mini
-    api_key_env: OPENAI_API_KEY  # Default: {PROVIDER}_API_KEY
-    max_tokens: 1000             # Default: 1000
-    timeout: 60                  # Default: 60 seconds
+provider: openai              # Required: openai, anthropic, or gemini
+model: gpt-4o-mini           # Optional: Uses provider default if not specified
+api_key_env: OPENAI_API_KEY  # Optional: Default is {PROVIDER}_API_KEY
+max_tokens: 1000             # Optional: Default 1000 (min: 100, max: 4000)
+temperature: 0.1             # Optional: Default 0.1 (min: 0.0, max: 2.0)
 ```
 
 ### Multiple Providers with Fallback
 
 ```yaml
-ai_providers:
-  - name: openai
+# Use providers array instead of provider
+providers:
+  - provider: openai
     model: gpt-4o-mini
-    api_key_env: OPENAI_API_KEY
-  - name: claude
+    priority: 1              # Lower number = higher priority
+  - provider: anthropic
     model: claude-3-haiku-20240307
-    api_key_env: ANTHROPIC_API_KEY
-  - name: gemini
+    priority: 2
+  - provider: gemini
     model: gemini-1.5-flash
-    api_key_env: GOOGLE_API_KEY
+    priority: 3
 
-performance:
-  fallback_strategy: priority  # priority, round_robin, fail_fast
+fallback_strategy: priority  # priority (default), round_robin, or fail_fast
 ```
 
 ### Supported Providers
 
-| Provider | Models | API Key Env | Notes |
-|----------|--------|-------------|-------|
-| **OpenAI** | `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo` | `OPENAI_API_KEY` | Most popular, good balance |
-| **Claude** | `claude-3-haiku-20240307`, `claude-3-sonnet-20240229`, `claude-3-opus-20240229` | `ANTHROPIC_API_KEY` | Excellent reasoning |
-| **Gemini** | `gemini-1.5-flash`, `gemini-1.5-pro` | `GOOGLE_API_KEY` | Fast and cost-effective |
+| Provider | Example Models | Default API Key Env | Notes |
+|----------|----------------|-------------------|-------|
+| **openai** | `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo` | `OPENAI_API_KEY` | Most popular, good balance |
+| **anthropic** | `claude-3-haiku-20240307`, `claude-3-sonnet-20240229`, `claude-3-opus-20240229` | `ANTHROPIC_API_KEY` | Excellent reasoning |
+| **gemini** | `gemini-1.5-flash`, `gemini-1.5-pro` | `GEMINI_API_KEY` | Fast and cost-effective |
 
-### Custom Endpoints
+### Caching Configuration
 
 ```yaml
-ai_providers:
-  - name: openai
-    model: gpt-4o-mini
-    endpoint: https://your-proxy.example.com/v1/chat/completions
-    api_key_env: CUSTOM_API_KEY
+enable_caching: true    # Default: true - Enable prompt caching for cost savings
+cache_ttl: 3600        # Default: 3600 seconds (1 hour) - Cache time-to-live
 ```
 
-## Trigger Configuration
+## Secret Management
 
-### Trigger Modes
+### Environment Variable (Default)
+
+By default, the plugin looks for API keys in environment variables:
 
 ```yaml
-trigger: auto  # auto (default), explicit, always
+provider: openai
+api_key_env: OPENAI_API_KEY  # Default: {PROVIDER}_API_KEY
 ```
 
-- **`auto`**: Analyze only on command failures (recommended)
-- **`explicit`**: Only analyze when explicitly configured
-- **`always`**: Analyze all commands, regardless of success/failure
+### External Secret Management (Production)
 
-### Conditions
+For production environments, use external secret management:
 
 ```yaml
-conditions:
-  # Exit codes that trigger analysis
-  exit_status: [1, 2, 125, 126, 127, 128, 130]
+secret_source:
+  type: aws_secrets_manager  # or vault, gcp_secret_manager, env_var
   
-  # Branches to analyze (empty = all branches)
-  branches: ["main", "develop", "release/*"]
-  
-  # Log patterns that trigger analysis
-  patterns: ["ERROR", "FAILED", "Exception", "fatal:", "panic:"]
+  # AWS Secrets Manager
+  secret_name: buildkite/ai-api-keys
+  region: us-east-1          # Default: us-east-1
 ```
 
-### Advanced Triggering
+### Supported Secret Sources
+
+#### AWS Secrets Manager
 
 ```yaml
-# Only analyze critical branches
-conditions:
-  branches: ["main", "production"]
-  exit_status: [1, 2]
+secret_source:
+  type: aws_secrets_manager
+  secret_name: buildkite/ai-api-keys
+  region: us-west-2
+```
 
-# Custom error patterns
-conditions:
-  patterns:
-    - "BUILD FAILED"
-    - "Test suite failed"
-    - "Compilation error"
+#### HashiCorp Vault
+
+```yaml
+secret_source:
+  type: vault
+  vault_path: secret/buildkite/api-key
+  vault_role: buildkite-agent
+  vault_addr: https://vault.example.com  # Optional: uses VAULT_ADDR env var
+```
+
+#### Google Cloud Secret Manager
+
+```yaml
+secret_source:
+  type: gcp_secret_manager
+  project_id: my-project-123
+  secret_name: ai-api-key
+```
+
+### Multiple Providers with Different Secrets
+
+```yaml
+providers:
+  - provider: openai
+    priority: 1
+    secret_source:
+      type: aws_secrets_manager
+      secret_name: openai-api-key
+  - provider: anthropic
+    priority: 2
+    secret_source:
+      type: vault
+      vault_path: secret/anthropic/key
 ```
 
 ## Context Configuration
@@ -147,10 +172,9 @@ conditions:
 
 ```yaml
 context:
-  log_lines: 500                    # Number of log lines to analyze
-  include_environment: true         # Include safe environment variables
-  include_pipeline_info: true       # Include pipeline metadata
-  include_git_info: true           # Include git information
+  max_log_lines: 500              # Number of log lines to analyze (default: 500)
+  include_env_vars: false         # Include environment variables (default: false - security risk)
+  include_git_info: true          # Include git branch, commit, author (default: true)
   custom_context: "Additional context for AI analysis"
 ```
 
@@ -158,9 +182,8 @@ context:
 
 ```yaml
 context:
-  log_lines: 1000
-  include_environment: true
-  include_pipeline_info: true
+  max_log_lines: 1000            # Min: 50, Max: 2000
+  include_env_vars: false        # Keep false for security
   include_git_info: true
   custom_context: |
     This is a Node.js microservice that:
@@ -170,44 +193,46 @@ context:
     - Critical for payment processing
 ```
 
+**Note:** The `custom_context` field is limited to 1000 characters.
+
 ## Security Configuration
 
-### Basic Redaction
+### Basic Security Settings
 
 ```yaml
-redaction:
-  redact_file_paths: true    # Redact user paths
-  redact_urls: true          # Redact credentials in URLs
+security:
+  sanitize_logs: true           # Enable log sanitization (default: true)
+  redact_secrets: true          # Automatically redact secrets (default: true)
+  run_as_non_root: true        # Enforce non-root container execution (default: true)
 ```
 
-### Custom Redaction Patterns
+### Advanced Security Features
 
 ```yaml
-redaction:
-  redact_file_paths: true
-  redact_urls: true
-  custom_patterns:
-    - "(?i)company[_-]?secret[\\s]*[=:]+[\\s]*[^\\s]+"
-    - "(?i)internal[_-]?token[\\s]*[=:]+[\\s]*[^\\s]+"
-    - "(?i)database[_-]?url[\\s]*[=:]+[\\s]*[^\\s]+"
+security:
+  sanitize_logs: true
+  redact_secrets: true
+  allowed_domains:              # Restrict API calls to these domains
+    - api.openai.com
+    - api.anthropic.com
+    - generativelanguage.googleapis.com
+  run_as_non_root: true
+  enable_thinking_mode: false   # Claude Opus 4 thinking mode (default: false)
+  enable_deep_think: false      # Gemini Pro Deep Think mode (default: false)
 ```
 
-### Security Best Practices
+### Domain Allowlist
+
+By default, the plugin restricts API calls to known AI provider domains:
 
 ```yaml
-redaction:
-  custom_patterns:
-    # Organization-specific secrets
-    - "(?i)acme[_-]?api[_-]?key[\\s]*[=:]+[\\s]*[^\\s]+"
-    - "(?i)internal[_-]?webhook[\\s]*[=:]+[\\s]*[^\\s]+"
-    
-    # Database connections
-    - "mongodb://[^\\s]+"
-    - "redis://[^\\s]+"
-    
-    # Custom tokens
-    - "Bearer [a-zA-Z0-9._-]+"
-    - "token=[a-zA-Z0-9._-]+"
+security:
+  allowed_domains:
+    - api.openai.com
+    - api.anthropic.com
+    - generativelanguage.googleapis.com
+    # Add custom proxy domains if needed:
+    - your-proxy.example.com
 ```
 
 ## Output Configuration
@@ -216,20 +241,19 @@ redaction:
 
 ```yaml
 output:
-  annotation_style: error        # error, warning, info, success
-  annotation_context: ai-error-analysis
-  include_confidence: true
+  style: error                  # error (default), warning, info, success
+  include_confidence: true      # Include AI confidence score (default: true)
+  save_artifact: false         # Save detailed analysis as artifact (default: false)
 ```
 
 ### Advanced Output
 
 ```yaml
 output:
-  annotation_style: warning
-  annotation_context: custom-ai-analysis
+  style: warning
   include_confidence: true
-  save_as_artifact: true
-  artifact_path: analysis-reports/error-analysis.json
+  save_artifact: true
+  artifact_path: ai-analysis.json  # Default: ai-analysis.json
 ```
 
 ### Annotation Styles
@@ -247,109 +271,152 @@ output:
 
 ```yaml
 performance:
-  timeout: 120                  # Total analysis timeout (seconds)
-  async_execution: false        # Run analysis in background
-  cache_enabled: true          # Enable result caching
-  cache_ttl: 3600             # Cache time-to-live (seconds)
+  timeout_seconds: 120          # Analysis timeout (default: 120, max: 600)
+  retry_attempts: 3            # Retry attempts on failure (default: 3, max: 5)
+  rate_limit_rpm: 30           # Rate limit requests/minute (default: 30, max: 100)
+  async_execution: false       # Run analysis asynchronously (default: false)
 ```
 
 ### Advanced Performance
 
 ```yaml
 performance:
-  timeout: 300
-  async_execution: true
-  cache_enabled: true
-  cache_ttl: 7200
-  fallback_strategy: priority
+  timeout_seconds: 300
+  retry_attempts: 5
+  rate_limit_rpm: 50
+  async_execution: true        # Don't block build
 ```
 
 ### Cost Optimization
 
 ```yaml
-performance:
-  # Enable caching to reduce API calls
-  cache_enabled: true
-  cache_ttl: 3600
-  
-  # Use faster, cheaper models
-ai_providers:
-  - name: openai
-    model: gpt-4o-mini          # Cheaper than gpt-4o
-  - name: gemini
-    model: gemini-1.5-flash     # Very cost-effective
+# Enable caching to reduce API calls
+enable_caching: true           # Default: true
+cache_ttl: 7200               # 2 hours (max: 86400 = 24 hours)
 
+# Use faster, cheaper models
+provider: gemini
+model: gemini-1.5-flash       # Very cost-effective
+
+# Reduce context size
 context:
-  log_lines: 300               # Reduce context size
+  max_log_lines: 300          # Reduce from default 500
 ```
 
 ## Advanced Configuration
 
-### Debug Mode
+### Debug and Dry Run
 
 ```yaml
-advanced:
-  debug_mode: true             # Enable detailed logging
-  dry_run: false              # Test without API calls
-  max_retries: 3              # Retry attempts on failure
+debug: true                    # Enable debug logging (default: false)
+dry_run: false                # Test configuration without calling AI APIs (default: false)
 ```
 
-### Custom Prompts
+### Complete Example with All Options
 
 ```yaml
-advanced:
-  custom_prompts:
-    default: |
-      You are a senior DevOps engineer. Analyze this build failure and provide:
-      1. Root cause analysis
-      2. Step-by-step fix instructions
-      3. Prevention strategies
-    
-    compilation_error: |
-      Focus on compilation issues. Analyze:
-      1. Syntax errors and missing imports
-      2. Dependency version conflicts
-      3. Configuration issues
-    
-    test_failure: |
-      Focus on test failures. Analyze:
-      1. Assertion failures and test logic
-      2. Environment setup issues
-      3. Data dependencies
-    
-    deployment_error: |
-      Focus on deployment issues. Analyze:
-      1. Infrastructure problems
-      2. Permission and access issues
-      3. Network connectivity
+steps:
+  - label: "🧪 Run Tests"
+    command: "npm test"
+    plugins:
+      - your-org/ai-error-analysis#v1.0.0:
+          # Single provider configuration
+          provider: openai
+          model: gpt-4o-mini
+          max_tokens: 1500
+          temperature: 0.1
+          
+          # Caching
+          enable_caching: true
+          cache_ttl: 3600
+          
+          # Secret management
+          secret_source:
+            type: aws_secrets_manager
+            secret_name: buildkite/openai-key
+            region: us-east-1
+          
+          # Context
+          context:
+            max_log_lines: 750
+            include_env_vars: false
+            include_git_info: true
+            custom_context: "Node.js service with PostgreSQL"
+          
+          # Security
+          security:
+            sanitize_logs: true
+            redact_secrets: true
+            run_as_non_root: true
+          
+          # Output
+          output:
+            style: error
+            include_confidence: true
+            save_artifact: true
+            artifact_path: ai-analysis.json
+          
+          # Performance
+          performance:
+            timeout_seconds: 180
+            retry_attempts: 3
+            rate_limit_rpm: 30
+            async_execution: false
+          
+          # Debug
+          debug: false
+          dry_run: false
 ```
 
-### Rate Limiting
+### Multi-Provider Example
 
 ```yaml
-advanced:
-  rate_limit:
-    requests_per_minute: 30
-    burst_limit: 10
+steps:
+  - label: "🧪 Run Tests"
+    command: "npm test"
+    plugins:
+      - your-org/ai-error-analysis#v1.0.0:
+          # Multiple providers with fallback
+          providers:
+            - provider: openai
+              model: gpt-4o-mini
+              priority: 1
+              secret_source:
+                type: aws_secrets_manager
+                secret_name: openai-key
+            - provider: anthropic
+              model: claude-3-haiku-20240307
+              priority: 2
+              secret_source:
+                type: vault
+                vault_path: secret/anthropic/key
+            - provider: gemini
+              model: gemini-1.5-flash
+              priority: 3
+          
+          fallback_strategy: priority
+          
+          # Rest of configuration...
 ```
 
 ## Environment Variables
 
-### Required Variables
+### API Key Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key | `sk-proj-abc123...` |
-| `ANTHROPIC_API_KEY` | Claude API key | `sk-ant-abc123...` |
-| `GOOGLE_API_KEY` | Gemini API key | `AIza123...` |
+By default, the plugin looks for API keys in these environment variables:
 
-### Optional Variables
+| Provider | Default Environment Variable | Example |
+|----------|---------------------------|---------|
+| `openai` | `OPENAI_API_KEY` | `sk-proj-abc123...` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `sk-ant-abc123...` |
+| `gemini` | `GEMINI_API_KEY` | `AIza123...` |
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AI_ERROR_ANALYSIS_CACHE_DIR` | Cache directory | `/tmp/ai-error-analysis-cache` |
-| `AI_ERROR_ANALYSIS_TEMP_DIR` | Temporary files | `/tmp/ai-error-analysis-temp` |
-| `AI_ERROR_ANALYSIS_DEBUG` | Debug logging | `false` |
+You can override the environment variable name using `api_key_env`:
+
+```yaml
+provider: openai
+api_key_env: MY_CUSTOM_OPENAI_KEY
+```
 
 ### Buildkite Variables Used
 
@@ -364,106 +431,125 @@ The plugin automatically uses these Buildkite environment variables:
 | `BUILDKITE_BRANCH` | Git branch |
 | `BUILDKITE_COMMIT` | Git commit hash |
 | `BUILDKITE_BUILD_AUTHOR` | Commit author |
+| `BUILDKITE_BUILD_URL` | Link to build |
+| `BUILDKITE_JOB_ID` | Job identification |
 
-## Complete Example
-
-```yaml
-steps:
-  - label: "🧪 Run Tests"
-    command: "npm test"
-    plugins:
-      - your-org/ai-error-analysis#v1.0.0:
-          # Multiple AI providers
-          ai_providers:
-            - name: openai
-              model: gpt-4o-mini
-              max_tokens: 1000
-            - name: claude
-              model: claude-3-haiku-20240307
-              max_tokens: 1000
-          
-          # Trigger conditions
-          trigger: auto
-          conditions:
-            exit_status: [1, 2]
-            branches: ["main", "develop"]
-          
-          # Context gathering
-          context:
-            log_lines: 500
-            include_environment: true
-            include_pipeline_info: true
-            include_git_info: true
-            custom_context: "Node.js service with PostgreSQL"
-          
-          # Security
-          redaction:
-            redact_file_paths: true
-            redact_urls: true
-            custom_patterns:
-              - "(?i)database[_-]?url[\\s]*[=:]+[\\s]*[^\\s]+"
-          
-          # Output
-          output:
-            annotation_style: error
-            include_confidence: true
-            save_as_artifact: true
-            artifact_path: "reports/ai-analysis.json"
-          
-          # Performance
-          performance:
-            timeout: 120
-            cache_enabled: true
-            cache_ttl: 3600
-            fallback_strategy: priority
-          
-          # Advanced
-          advanced:
-            debug_mode: false
-            max_retries: 3
-            custom_prompts:
-              test_failure: |
-                Analyze this test failure in a Node.js application.
-                Focus on common issues like async/await problems,
-                database connections, and environment setup.
-```
-
-## Troubleshooting Configuration
+## Troubleshooting
 
 ### Common Issues
 
 1. **No analysis triggered**
-   ```yaml
-   # Check exit status configuration
-   conditions:
-     exit_status: [1, 2, 125, 126, 127, 128, 130]
-   ```
+   - Check that the command actually failed (exit code non-zero)
+   - Verify API keys are set correctly
+   - Enable debug mode to see detailed logs
 
 2. **Analysis too slow**
    ```yaml
-   # Reduce context and enable async
+   # Reduce context and timeout
    context:
-     log_lines: 200
+     max_log_lines: 200
    performance:
-     async_execution: true
+     timeout_seconds: 60
    ```
 
 3. **API costs too high**
    ```yaml
    # Enable caching and use cheaper models
-   ai_providers:
-     - name: gemini
-       model: gemini-1.5-flash
-   performance:
-     cache_enabled: true
+   provider: gemini
+   model: gemini-1.5-flash
+   enable_caching: true
+   cache_ttl: 7200
    ```
 
-### Validation
+### Testing Configuration
 
-Use dry run mode to test configuration:
+Use dry run mode to test configuration without making API calls:
 
 ```yaml
-advanced:
-  dry_run: true
-  debug_mode: true
+debug: true
+dry_run: true
 ```
+
+This will validate your configuration and show what would be sent to the AI provider.
+
+## Configuration Reference
+
+### Top-Level Properties
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `provider` | string | - | AI provider: `openai`, `anthropic`, or `gemini` (required unless using `providers`) |
+| `providers` | array | - | Multiple AI providers with fallback (alternative to `provider`) |
+| `model` | string | - | Specific AI model to use (optional, uses provider default) |
+| `api_key_env` | string | `{PROVIDER}_API_KEY` | Environment variable containing the API key |
+| `max_tokens` | integer | 1000 | Maximum tokens for AI response (100-4000) |
+| `temperature` | number | 0.1 | AI model temperature (0.0-2.0) |
+| `enable_caching` | boolean | true | Enable prompt caching for cost savings |
+| `cache_ttl` | integer | 3600 | Cache time-to-live in seconds (300-86400) |
+| `secret_source` | object | - | External secret management configuration |
+| `fallback_strategy` | string | `priority` | Strategy when primary provider fails: `priority`, `round_robin`, `fail_fast` |
+| `context` | object | - | Build context configuration |
+| `output` | object | - | Output and reporting configuration |
+| `performance` | object | - | Performance and reliability settings |
+| `security` | object | - | Security settings |
+| `debug` | boolean | false | Enable debug logging |
+| `dry_run` | boolean | false | Test configuration without calling AI APIs |
+
+### Context Object
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `include_env_vars` | boolean | false | Include environment variables (security risk) |
+| `include_git_info` | boolean | true | Include git branch, commit, and author info |
+| `max_log_lines` | integer | 500 | Maximum log lines to analyze (50-2000) |
+| `custom_context` | string | - | Custom context to include (max 1000 chars) |
+
+### Security Object
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `sanitize_logs` | boolean | true | Enable log sanitization before AI analysis |
+| `redact_secrets` | boolean | true | Automatically redact secrets from logs |
+| `allowed_domains` | array | See schema | Allowed domains for API calls |
+| `run_as_non_root` | boolean | true | Enforce non-root container execution |
+| `enable_thinking_mode` | boolean | false | Enable extended thinking mode (Claude Opus 4) |
+| `enable_deep_think` | boolean | false | Enable Deep Think mode (Gemini Pro) |
+
+### Output Object
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `style` | string | `error` | Buildkite annotation style: `error`, `warning`, `info`, `success` |
+| `include_confidence` | boolean | true | Include AI confidence score in output |
+| `save_artifact` | boolean | false | Save detailed analysis as build artifact |
+| `artifact_path` | string | `ai-analysis.json` | Path for analysis artifact |
+
+### Performance Object
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `timeout_seconds` | integer | 120 | Analysis timeout in seconds (30-600) |
+| `retry_attempts` | integer | 3 | Number of retry attempts on failure (1-5) |
+| `rate_limit_rpm` | integer | 30 | Rate limit requests per minute (1-100) |
+| `async_execution` | boolean | false | Run analysis asynchronously (don't block build) |
+
+### Secret Source Object
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `type` | string | Type of secret management: `aws_secrets_manager`, `vault`, `gcp_secret_manager`, `env_var` |
+| `secret_name` | string | AWS Secrets Manager secret name |
+| `region` | string | AWS region (default: us-east-1) |
+| `vault_path` | string | Vault secret path |
+| `vault_role` | string | Vault AppRole for authentication |
+| `vault_addr` | string | Vault server address |
+| `project_id` | string | GCP project ID for Secret Manager |
+
+### Provider Object (for `providers` array)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `provider` | string | - | Provider name: `openai`, `anthropic`, or `gemini` (required) |
+| `model` | string | - | Specific model to use |
+| `priority` | integer | 1 | Priority for fallback (1-10, lower = higher priority) |
+| `secret_source` | object | - | Provider-specific secret configuration |

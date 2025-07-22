@@ -190,7 +190,7 @@ configuration:
 
 ### Prerequisites
 
-- Python 3.7 or later
+- Python 3.10 or later (3.11 recommended)
 - Docker and Docker Compose
 - Git
 - Text editor or IDE

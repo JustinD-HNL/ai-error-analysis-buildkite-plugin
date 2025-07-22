@@ -328,12 +328,12 @@ steps:
     plugins:
       - ./ai-error-analysis:
           providers:
-            - provider: openai
+            - name: openai
               model: "gpt-4o-mini"
               secret_source:
                 type: aws_secrets_manager
                 secret_name: buildkite/openai-key
-            - provider: anthropic  
+            - name: anthropic  
               model: "claude-3-5-haiku-20241022"
               secret_source:
                 type: vault
@@ -359,19 +359,24 @@ steps:
 
 ## Cost Optimization
 
-### Approximate Costs
+### Model Pricing
 
-| Provider | Model | ~Cost/Analysis | Best For |
-|----------|-------|---------------|----------|
-| Google | gemini-1.5-flash | $0.001-0.003 | High volume, cost-sensitive |
-| OpenAI | gpt-4o-mini | $0.005-0.015 | Balanced quality/cost |
-| Anthropic | claude-3-5-haiku-20241022 | $0.008-0.020 | Fast Claude responses |
-| Google | gemini-1.5-pro | $0.010-0.030 | Production workloads |
-| Anthropic | claude-3-5-sonnet-20241022 | $0.015-0.045 | Balanced capability |
-| Anthropic | claude-sonnet-4-20250514 | $0.020-0.050 | Enhanced reasoning |
-| OpenAI | gpt-4o | $0.020-0.080 | Multimodal analysis |
-| OpenAI | gpt-4.1 | $0.030-0.100 | Latest with 1M context |
-| Anthropic | claude-opus-4-20250514 | $0.050-0.150 | Best coding & complex tasks |
+**Token costs** (per 1,000 tokens):
+| Provider | Model | Input Cost | Output Cost | Best For |
+|----------|-------|------------|-------------|----------|
+| Google | gemini-1.5-flash | $0.0001 | $0.0004 | High volume, cost-sensitive |
+| Anthropic | claude-3-5-haiku-20241022 | $0.0008 | $0.004 | Fast, affordable Claude |
+| OpenAI | gpt-4o-mini | $0.00015 | $0.0006 | Balanced quality/cost |
+| Google | gemini-1.5-pro | $0.00125 | $0.005 | Production workloads |
+| Anthropic | claude-3-5-sonnet-20241022 | $0.003 | $0.015 | Balanced capability |
+| OpenAI | gpt-4o | $0.0025 | $0.01 | Multimodal analysis |
+| OpenAI | gpt-4.1 | $0.01 | $0.03 | Latest with 1M context |
+| Anthropic | claude-opus-4-20250514 | $0.015 | $0.075 | Best coding & complex tasks |
+
+**Estimated cost per analysis**: Most error analyses use 500-2000 tokens total, resulting in:
+- Budget models (Flash/Haiku): $0.001-0.008 per analysis
+- Mid-tier models (Sonnet/GPT-4o): $0.01-0.04 per analysis  
+- Premium models (Opus 4/GPT-4.1): $0.05-0.20 per analysis
 
 ### Cost Reduction Features
 - **Caching**: Avoid duplicate analyses (60%+ savings)

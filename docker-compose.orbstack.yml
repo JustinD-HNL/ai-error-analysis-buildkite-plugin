@@ -64,7 +64,14 @@ services:
     # Security options
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     read_only: false  # Agent needs write access for builds
+    user: "1000:1000"  # Run as non-root user
     
   # Optional: Run multiple agents
   buildkite-agent-2:

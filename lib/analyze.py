@@ -190,25 +190,29 @@ ERROR LOG (last 100 lines):
 {log_excerpt[:5000]}  # Increased log size
 ```
 
+CRITICAL ANALYSIS RULES FOR GIT ERRORS:
+1. If you see "fatal: unable to access" with a GitHub URL, this is AUTHENTICATION failure, NOT network issues
+2. If you see "HTTP/2 stream 0 was not closed cleanly: PROTOCOL_ERROR" with GitHub, this means authentication failed
+3. If the log shows "Using GitHub token for authentication" followed by an error, the token is invalid/expired
+4. NEVER suggest "check network connectivity" for GitHub access errors - it's always authentication
+
 ANALYSIS INSTRUCTIONS:
 Analyze the error logs carefully and provide your response in EXACTLY this format:
 
-ROOT CAUSE: [Write a complete 1-2 sentence explanation of what specifically caused the failure. Be detailed and specific to this error.]
+ROOT CAUSE: [Write a complete 1-2 sentence explanation. For GitHub errors, explicitly state it's an authentication issue with the token]
 
 SUGGESTED FIXES:
-- [Specific fix #1: Include exact commands, configuration changes, or code modifications needed]
-- [Specific fix #2: Provide alternative solution with concrete steps]
-- [Specific fix #3: Include debugging steps or verification commands]
+- [For GitHub auth errors: "Regenerate GitHub personal access token at https://github.com/settings/tokens with 'repo' scope for private repositories"]
+- [For GitHub auth errors: "Verify GITHUB_TOKEN in .env file is correct and hasn't expired - tokens show as 'ghp_' followed by random characters"]
+- [For GitHub auth errors: "Test token with: curl -H 'Authorization: token YOUR_TOKEN' https://api.github.com/user"]
 
 CONFIDENCE: [0-100]%
 SEVERITY: [low/medium/high]
 
 Important:
-- Focus on the actual error messages in the logs
-- Provide specific commands or configuration changes
-- If it's a git/GitHub authentication error, suggest exact steps to fix it
-- If it's a database connection error, provide specific troubleshooting steps
-- Always complete your ROOT CAUSE sentence - do not cut it off"""
+- Be SPECIFIC about the actual error - don't give generic advice
+- For GitHub/git errors, ALWAYS focus on authentication/token issues
+- Include exact commands and URLs where applicable"""
         
         return prompt
     

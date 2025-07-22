@@ -12,7 +12,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
-RUN useradd -m -s /bin/bash buildkite-user
+RUN useradd -m -s /bin/bash buildkite-user && \
+    # Ensure git has proper permissions for the user
+    mkdir -p /home/buildkite-user/.ssh && \
+    chown -R buildkite-user:buildkite-user /home/buildkite-user
 
 # Set up plugin directory structure
 RUN mkdir -p /buildkite/plugins/ai-error-analysis && \
@@ -32,7 +35,7 @@ RUN python3.11 -m venv /home/buildkite-user/.venv && \
 
 # Set up environment
 ENV PATH="/home/buildkite-user/.venv/bin:$PATH"
-ENV PYTHONPATH="/buildkite/plugins/ai-error-analysis/lib:$PYTHONPATH"
+ENV PYTHONPATH="/buildkite/plugins/ai-error-analysis/lib"
 ENV BUILDKITE_PLUGINS_PATH="/buildkite/plugins"
 ENV BUILDKITE_HOOKS_PATH="/buildkite/hooks"
 ENV BUILDKITE_BUILD_PATH="/buildkite/builds"

@@ -24,12 +24,58 @@ CHECKOUT_LOG=$(mktemp /tmp/checkout-log.XXXXXX)
 if [[ -n "${BUILDKITE_REPO}" ]]; then
   echo "Cloning ${BUILDKITE_REPO}..."
   
+  # Configure git with GitHub token if available and repo is from GitHub
+  if [[ -n "${GITHUB_TOKEN:-}" ]] && [[ "${BUILDKITE_REPO}" =~ github\.com ]]; then
+    # Extract the repo path from the URL
+    REPO_PATH=$(echo "${BUILDKITE_REPO}" | sed -E 's|https://github.com/||; s|\.git$||')
+    
+    # Configure git to use the token as a credential helper
+    git config --global credential.helper store
+    echo "https://x-access-token:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
+    
+    # Also set the authorization header
+    git config --global http.https://github.com/.extraheader "Authorization: Bearer ${GITHUB_TOKEN}"
+    
+    echo "Using GitHub token for authentication"
+    AUTHENTICATED_REPO="${BUILDKITE_REPO}"
+  else
+    AUTHENTICATED_REPO="${BUILDKITE_REPO}"
+  fi
+  
   # Buildkite's default checkout command
-  if git clone -c "http.extraheader=${BUILDKITE_GIT_CLONE_FLAGS:-}" -- "${BUILDKITE_REPO}" . 2>&1 | tee "${CHECKOUT_LOG}"; then
+  # Use pipefail to capture git's exit status even when piping to tee
+  set -o pipefail
+  
+  # Debug: Check git config
+  if [[ "${AI_ERROR_ANALYSIS_DEBUG:-false}" == "true" ]]; then
+    echo "Git config:"
+    git config --list | grep -E "(credential|http)" || true
+  fi
+  
+  # Try clone - let git handle the authentication via config
+  if git clone -- "${AUTHENTICATED_REPO}" . 2>&1 | tee "${CHECKOUT_LOG}"; then
     CHECKOUT_EXIT_STATUS=0
   else
     CHECKOUT_EXIT_STATUS=$?
+    
+    # If it fails with HTTP/2 error, retry with HTTP/1.1
+    if [[ ${CHECKOUT_EXIT_STATUS} -ne 0 ]] && grep -q "HTTP/2" "${CHECKOUT_LOG}"; then
+      echo "HTTP/2 failed, retrying with HTTP/1.1..."
+      rm -rf .git .* * 2>/dev/null || true  # Clean up failed attempt
+      
+      # Force HTTP/1.1
+      git config --global http.version HTTP/1.1
+      
+      if git clone -- "${AUTHENTICATED_REPO}" . 2>&1 | tee -a "${CHECKOUT_LOG}"; then
+        CHECKOUT_EXIT_STATUS=0
+        echo "✅ Successfully cloned using HTTP/1.1"
+      else
+        CHECKOUT_EXIT_STATUS=$?
+      fi
+    fi
   fi
+  
+  set +o pipefail
 else
   echo "No repository configured"
   CHECKOUT_EXIT_STATUS=0
@@ -46,15 +92,38 @@ if [[ ${CHECKOUT_EXIT_STATUS} -ne 0 ]]; then
   cat > "${CONTEXT_FILE}" << EOF
 {
   "build_info": {
-    "pipeline": "${BUILDKITE_PIPELINE_NAME:-unknown}",
-    "branch": "${BUILDKITE_BRANCH:-unknown}",
-    "command": "git clone ${BUILDKITE_REPO}",
-    "exit_status": ${CHECKOUT_EXIT_STATUS},
-    "phase": "checkout"
+    "build_id": "${BUILDKITE_BUILD_ID:-unknown}",
+    "build_number": "${BUILDKITE_BUILD_NUMBER:-unknown}",
+    "pipeline_name": "${BUILDKITE_PIPELINE_NAME:-${BUILDKITE_PIPELINE_SLUG:-unknown}}",
+    "step_key": "checkout"
   },
-  "log_excerpt": $(cat "${CHECKOUT_LOG}" | tail -100 | jq -Rs .)
+  "error_info": {
+    "exit_code": ${CHECKOUT_EXIT_STATUS},
+    "command": "git clone",
+    "error_category": "checkout_failure"
+  },
+  "git_info": {
+    "branch": "${BUILDKITE_BRANCH:-unknown}",
+    "commit": "${BUILDKITE_COMMIT:-unknown}",
+    "author": "${BUILDKITE_BUILD_AUTHOR:-${BUILDKITE_BUILD_CREATOR_EMAIL:-unknown}}"
+  },
+  "pipeline_info": {
+    "pipeline": "${BUILDKITE_PIPELINE_SLUG:-unknown}",
+    "pipeline_name": "${BUILDKITE_PIPELINE_NAME:-${BUILDKITE_PIPELINE_SLUG:-unknown}}"
+  },
+  "log_excerpt": $(cat "${CHECKOUT_LOG}" | tail -200 | head -c 10000 | jq -Rs .),
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
+
+  # Sanitize the context
+  SANITIZED_CONTEXT=$(mktemp /tmp/ai-context-sanitized.XXXXXX.json)
+  if python3 "${PLUGIN_DIR}/lib/log_sanitizer.py" \
+    "${CONTEXT_FILE}" \
+    "${SANITIZED_CONTEXT}"; then
+    # Use sanitized context for analysis
+    mv "${SANITIZED_CONTEXT}" "${CONTEXT_FILE}"
+  fi
 
   # Run AI analysis
   ANALYSIS_OUTPUT=$(mktemp /tmp/ai-analysis.XXXXXX.json)
@@ -73,41 +142,38 @@ EOF
     echo "--- ${LOG_PREFIX} AI Analysis Results"
     
     if [[ -f "${ANALYSIS_OUTPUT}" ]]; then
-      # Extract and format the analysis
-      ROOT_CAUSE=$(jq -r '.analysis.root_cause // "Unknown"' "${ANALYSIS_OUTPUT}")
-      CONFIDENCE=$(jq -r '.analysis.confidence // 0' "${ANALYSIS_OUTPUT}")
-      SEVERITY=$(jq -r '.analysis.severity // "unknown"' "${ANALYSIS_OUTPUT}")
+      # Generate report using the report generator
+      REPORT_FILE=$(mktemp /tmp/ai-report.XXXXXX.md)
       
-      echo "🔍 Root Cause (${CONFIDENCE}% confidence, ${SEVERITY} severity):"
-      echo "${ROOT_CAUSE}"
-      echo ""
-      echo "💡 Suggested Fixes:"
-      jq -r '.analysis.suggested_fixes[]? // empty' "${ANALYSIS_OUTPUT}" | while read -r fix; do
-        echo "  • ${fix}"
-      done
-      echo ""
-      echo "📊 Analysis by: $(jq -r '.provider // "unknown"' "${ANALYSIS_OUTPUT}") $(jq -r '.model // ""' "${ANALYSIS_OUTPUT}")"
-      
-      # Create annotation
-      if command -v buildkite-agent &> /dev/null; then
-        ANNOTATION_CONTENT="## 🤖 AI Error Analysis - Checkout Failure\\n\\n"
-        ANNOTATION_CONTENT+="**Root Cause:** ${ROOT_CAUSE}\\n\\n"
-        ANNOTATION_CONTENT+="**Suggested Fixes:**\\n"
-        jq -r '.analysis.suggested_fixes[]? // empty' "${ANALYSIS_OUTPUT}" | while read -r fix; do
-          ANNOTATION_CONTENT+="- ${fix}\\n"
-        done
-        ANNOTATION_CONTENT+="\\n**Confidence:** ${CONFIDENCE}% | **Severity:** ${SEVERITY}"
-        ANNOTATION_CONTENT+="\\n**Provider:** $(jq -r '.provider // "unknown"' "${ANALYSIS_OUTPUT}") ($(jq -r '.model // ""' "${ANALYSIS_OUTPUT}"))"
+      if python3 "${PLUGIN_DIR}/lib/report_generator.py" \
+        "${ANALYSIS_OUTPUT}" \
+        "${CONTEXT_FILE}" \
+        "markdown" \
+        "true" \
+        > "${REPORT_FILE}"; then
         
-        echo -e "${ANNOTATION_CONTENT}" | buildkite-agent annotate --style "error" --context "ai-checkout-analysis"
+        # Display report
+        cat "${REPORT_FILE}"
+        
+        # Create annotation
+        if command -v buildkite-agent &> /dev/null; then
+          cat "${REPORT_FILE}" | buildkite-agent annotate \
+            --style "error" \
+            --context "ai-checkout-analysis"
+          echo "📝 Checkout failure analysis annotation created"
+        fi
+      else
+        echo "❌ Report generation failed"
       fi
+      
+      rm -f "${REPORT_FILE}"
     fi
   else
     echo "❌ AI analysis failed"
   fi
   
   # Cleanup
-  rm -f "${CONTEXT_FILE}" "${ANALYSIS_OUTPUT}"
+  rm -f "${CONTEXT_FILE}" "${ANALYSIS_OUTPUT}" "${SANITIZED_CONTEXT}"
 fi
 
 # Cleanup

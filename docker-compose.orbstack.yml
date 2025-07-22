@@ -16,6 +16,7 @@ services:
       BUILDKITE_AGENT_TAGS: ${BUILDKITE_AGENT_TAGS:-queue=default,os=linux,orbstack=true,ai-error-analysis=enabled}
       
       # GitHub access (for HTTPS cloning)
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       BUILDKITE_GIT_CLONE_FLAGS: "-c http.extraheader='Authorization: Bearer ${GITHUB_TOKEN:-}'"
       
       # AI Provider Configuration (set at least one)

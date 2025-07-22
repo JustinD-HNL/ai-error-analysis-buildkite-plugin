@@ -1,4 +1,4 @@
-# AI Error Analysis Buildkite Plugin
+# AI Error Analysis Buildkite Plugin (This is still a work in progress)
 
 🤖 Automatically analyze build failures using state-of-the-art AI models to provide actionable insights and suggestions.
 

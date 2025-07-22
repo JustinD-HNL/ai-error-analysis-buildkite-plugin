@@ -1,4 +1,4 @@
-# AI Error Analysis Buildkite Plugin (STILL A WORK IN PROGRESS DO NOT USE IN PRODUCTION OR WITHOUT EXTENSIVE TESTING UNTILL FULLY DEVELOPED)
+# AI Error Analysis Buildkite Plugin
 
 🤖 Automatically analyze build failures using state-of-the-art AI models to provide actionable insights and suggestions.
 
@@ -9,13 +9,13 @@
 
 **NEVER store API keys in pipeline configuration.** This plugin requires external secret management for production use. API keys stored in pipeline settings are exposed via the Buildkite API and logs.
 
-## Supported AI Providers (2025 Models)
+## Supported AI Providers
 
 | Provider | Models | Authentication | Notes |
 |----------|--------|----------------|-------|
 | **OpenAI** | `GPT-4o`, `GPT-4o mini`, `GPT-4o nano` | Bearer token | Latest models with improved reasoning |
-| **Anthropic** | `Claude 3.5 Haiku`, `Claude Sonnet 4`, `Claude Opus 4` | x-api-key header | Extended thinking mode available |
-| **Google** | `Gemini 2.0 Flash`, `Gemini 2.5 Pro` | API key parameter | Deep Think mode for complex analysis |
+| **Anthropic** | `Claude 3.5 Haiku`, `Claude Sonnet 4`, `Claude Opus 4` | x-api-key header | Extended thinking mode available for Opus 4 |
+| **Google** | `Gemini 2.0 Flash`, `Gemini 2.5 Pro` | API key parameter | Deep Think mode for Pro models |
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ steps:
   - label: "Tests"
     command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           provider: openai
           model: "GPT-4o mini"
           secret_source:
@@ -42,7 +42,7 @@ steps:
   - label: "Tests" 
     command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           provider: anthropic
           model: "Claude 3.5 Haiku"
           secret_source:
@@ -57,7 +57,7 @@ steps:
   - label: "Tests"
     command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           provider: gemini
           model: "Gemini 2.0 Flash"
           secret_source:
@@ -84,7 +84,7 @@ export OPENAI_API_KEY="your-api-key-here"
 steps:
   - command: "pytest tests/"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           provider: openai
           model: "GPT-4o mini"
           max_tokens: 1000
@@ -100,7 +100,7 @@ steps:
 steps:
   - command: "cargo test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           provider: anthropic
           model: "Claude Sonnet 4"
           max_tokens: 2000
@@ -278,7 +278,7 @@ export ANTHROPIC_API_KEY=$(vault kv get \
 steps:
   - command: "make test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           provider: openai
           secret_source:
             type: aws_secrets_manager
@@ -290,7 +290,7 @@ steps:
 steps:
   - command: "npm test"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           providers:
             - provider: openai
               model: "GPT-4o mini"
@@ -310,7 +310,7 @@ steps:
 steps:
   - command: "pytest"
     plugins:
-      - your-org/ai-error-analysis-buildkite-plugin:
+      - ./ai-error-analysis:
           provider: gemini
           model: "Gemini 2.0 Flash"  # Most cost-effective
           max_tokens: 500
@@ -335,9 +335,9 @@ steps:
 
 ### Cost Reduction Features
 - **Caching**: Avoid duplicate analyses (60%+ savings)
-- **Log truncation**: Send only relevant error context
+- **Log truncation**: Send only relevant error context  
 - **Rate limiting**: Prevent API quota exhaustion
-- **Batch processing**: Analyze multiple errors together
+- **Token limits**: Configurable max_tokens parameter
 
 ## Development
 
@@ -350,7 +350,7 @@ steps:
 
 1. **Clone and setup**:
 ```bash
-git clone https://github.com/your-org/ai-error-analysis-buildkite-plugin
+git clone https://github.com/JustinD-HNL/ai-error-analysis-buildkite-plugin
 cd ai-error-analysis-buildkite-plugin
 pip install -r requirements.txt
 ```
@@ -377,17 +377,12 @@ export BUILDKITE_COMMAND="npm test"
 ### Testing Framework
 
 ```bash
-# Python unit tests
-pytest tests/ --cov=lib --cov-report=term --cov-fail-under=80
+# Run test scripts from testing directory
+cd testing
+./test-full-pipeline.sh
 
-# Security scanning
-bandit -r lib/
-
-# Hook integration tests  
-bats tests/hooks.bats
-
-# Type checking
-mypy lib/ --strict
+# Or use the simple test
+./test-analysis.sh
 ```
 
 ## Troubleshooting

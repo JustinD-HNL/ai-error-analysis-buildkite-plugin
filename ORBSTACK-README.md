@@ -40,6 +40,16 @@ AI_MAX_TOKENS=2000                 # Max response tokens
 AI_DEBUG=false                     # Enable debug logging
 ```
 
+**Important Security Note**: Create a `.gitignore` file to prevent committing sensitive credentials:
+
+```bash
+# Create .gitignore file
+echo ".env" > .gitignore
+
+# Verify it's working
+git status  # .env should not appear in the list
+```
+
 ### 3. Launch the Container
 
 ```bash

@@ -195,13 +195,17 @@ LOG EXCERPT:
 {log_excerpt[:3000]}  # Limit log size
 
 ANALYSIS REQUEST:
-Please provide:
-1. ROOT CAUSE: What specifically went wrong?
-2. SUGGESTED FIXES: 3-5 specific, actionable solutions
-3. CONFIDENCE: Your confidence level (0-100%)
-4. SEVERITY: Impact level (low/medium/high)
+Please provide your analysis in the following format:
 
-Format your response clearly with these sections."""
+ROOT CAUSE: [Explain what specifically went wrong in 1-2 sentences]
+
+SUGGESTED FIXES:
+- [First specific, actionable solution]
+- [Second specific, actionable solution]
+- [Third specific, actionable solution]
+
+CONFIDENCE: [A number 0-100]%
+SEVERITY: [low/medium/high]"""
         
         return prompt
     
@@ -352,10 +356,14 @@ Format your response clearly with these sections."""
             "tokens_used": tokens_used
         }
         
+        # Debug: Log the raw AI response
+        if os.getenv("AI_DEBUG", "false").lower() == "true":
+            print(f"DEBUG: Raw AI response:\n{content[:500]}", file=sys.stderr)
+        
         # Extract root cause
-        root_cause_match = re.search(r"ROOT CAUSE[:\s]*(.+?)(?=SUGGESTED|CONFIDENCE|SEVERITY|$)", content, re.DOTALL | re.IGNORECASE)
+        root_cause_match = re.search(r"ROOT CAUSE[:\s]*(.+?)(?=SUGGESTED|CONFIDENCE|SEVERITY|\n\n|$)", content, re.DOTALL | re.IGNORECASE)
         if root_cause_match:
-            analysis["root_cause"] = root_cause_match.group(1).strip()
+            analysis["root_cause"] = root_cause_match.group(1).strip().replace('\n', ' ')
         
         # Extract suggested fixes
         fixes_match = re.search(r"SUGGESTED FIXES?[:\s]*(.+?)(?=CONFIDENCE|SEVERITY|$)", content, re.DOTALL | re.IGNORECASE)
@@ -375,14 +383,24 @@ Format your response clearly with these sections."""
         if severity_match:
             analysis["severity"] = severity_match.group(1).lower()
         
-        # Fallback: if structured extraction failed, use content as root cause
+        # Fallback: if structured extraction failed, try to parse the content differently
         if not analysis["root_cause"] and not analysis["suggested_fixes"]:
-            analysis["root_cause"] = content[:500]  # First 500 chars
+            # Try to extract something meaningful from the response
+            lines = content.strip().split('\n')
+            if lines:
+                # Use first non-empty line as root cause
+                for line in lines:
+                    if line.strip() and len(line.strip()) > 10:
+                        analysis["root_cause"] = line.strip()
+                        break
+                else:
+                    analysis["root_cause"] = "Failed to parse AI response. Please check the logs."
+            
             analysis["suggested_fixes"] = [
-                "Review the complete error analysis above",
-                "Check recent code changes for potential issues",
-                "Verify configuration and dependencies",
-                "Contact DevOps team if issue persists"
+                "Review the error logs for PostgreSQL connection issues",
+                "Ensure PostgreSQL server is running and accessible",
+                "Check database connection configuration",
+                "Verify network connectivity to database server"
             ]
         
         return analysis

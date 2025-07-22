@@ -246,17 +246,41 @@ analyze_error() {
   # Escape command for JSON
   local escaped_command=$(echo "${BUILDKITE_COMMAND:-unknown}" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr '\n' ' ')
   
+  # Determine error category based on exit code and log content
+  local error_category="unknown"
+  if [[ ${COMMAND_EXIT_STATUS} -eq 1 ]]; then
+    error_category="general_failure"
+  elif [[ ${COMMAND_EXIT_STATUS} -eq 2 ]]; then
+    error_category="misuse"
+  elif [[ ${COMMAND_EXIT_STATUS} -eq 126 ]]; then
+    error_category="permission_denied"
+  elif [[ ${COMMAND_EXIT_STATUS} -eq 127 ]]; then
+    error_category="command_not_found"
+  elif [[ ${COMMAND_EXIT_STATUS} -ge 128 ]]; then
+    error_category="signal"
+  fi
+  
   local context_data=$(cat << EOF
 {
   "build_info": {
     "build_id": "${BUILDKITE_BUILD_ID:-unknown}",
     "build_number": "${BUILDKITE_BUILD_NUMBER:-unknown}",
-    "pipeline": "${BUILDKITE_PIPELINE_SLUG:-unknown}",
-    "step_key": "${BUILDKITE_STEP_KEY:-unknown}",
+    "pipeline_name": "${BUILDKITE_PIPELINE_NAME:-${BUILDKITE_PIPELINE_SLUG:-unknown}}",
+    "step_key": "${BUILDKITE_STEP_KEY:-unknown}"
+  },
+  "error_info": {
+    "exit_code": ${COMMAND_EXIT_STATUS},
+    "command": "${escaped_command}",
+    "error_category": "${error_category}"
+  },
+  "git_info": {
     "branch": "${BUILDKITE_BRANCH:-unknown}",
     "commit": "${BUILDKITE_COMMIT:-unknown}",
-    "command": "${escaped_command}",
-    "exit_status": ${COMMAND_EXIT_STATUS}
+    "author": "${BUILDKITE_BUILD_AUTHOR:-${BUILDKITE_BUILD_CREATOR_EMAIL:-unknown}}"
+  },
+  "pipeline_info": {
+    "pipeline": "${BUILDKITE_PIPELINE_SLUG:-unknown}",
+    "pipeline_name": "${BUILDKITE_PIPELINE_NAME:-${BUILDKITE_PIPELINE_SLUG:-unknown}}"
   },
   "log_excerpt": "$(tail -n 100 /tmp/buildkite.log 2>/dev/null | head -c 5000 | sed 's/"/\\"/g' | tr '\n' ' ' || echo 'Log not available')",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -330,9 +354,9 @@ generate_report() {
   if ! python3 "${PLUGIN_DIR}/lib/report_generator.py" \
     "${TEMP_DIR}/analysis_result.json" \
     "${TEMP_DIR}/sanitized_context.json" \
-    "html" \
+    "markdown" \
     "true" \
-    > "${TEMP_DIR}/report.html"; then
+    > "${TEMP_DIR}/report.md"; then
     echo "❌ Report generation failed" >&2
     return 1
   fi
@@ -342,13 +366,13 @@ generate_report() {
   local include_confidence="${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_OUTPUT_INCLUDE_CONFIDENCE:-true}"
   
   if command -v buildkite-agent >/dev/null; then
-    cat "${TEMP_DIR}/report.html" | buildkite-agent annotate \
+    cat "${TEMP_DIR}/report.md" | buildkite-agent annotate \
       --style "$annotation_style" \
       --context "ai-error-analysis"
     echo "📝 Analysis annotation created"
   else
     echo "⚠️ buildkite-agent not available, displaying report:"
-    cat "${TEMP_DIR}/report.html"
+    cat "${TEMP_DIR}/report.md"
   fi
   
   # Save as artifact if configured
@@ -362,22 +386,22 @@ generate_report() {
 
 # Create fallback annotation if analysis fails
 create_fallback_annotation() {
-  local fallback_html='<div style="border-left: 4px solid #f39c12; padding: 12px; background: #fef8f1;">
-    <h3 style="margin: 0; color: #e67e22;">⚠️ AI Error Analysis Failed</h3>
-    <p style="margin: 8px 0 0 0;">The automated error analysis could not be completed. Please review the logs manually.</p>
-    <details style="margin-top: 8px;">
-      <summary style="cursor: pointer;">Troubleshooting</summary>
-      <ul style="margin: 8px 0; padding-left: 20px;">
-        <li>Verify external secret management configuration</li>
-        <li>Check network connectivity to AI provider</li>
-        <li>Review plugin configuration and permissions</li>
-        <li>Enable debug mode for more details</li>
-      </ul>
-    </details>
-  </div>'
+  local fallback_md='## ⚠️ AI Error Analysis Failed
+
+The automated error analysis could not be completed. Please review the logs manually.
+
+<details>
+<summary>Troubleshooting</summary>
+
+- Verify external secret management configuration
+- Check network connectivity to AI provider
+- Review plugin configuration and permissions
+- Enable debug mode for more details
+
+</details>'
   
   if command -v buildkite-agent >/dev/null; then
-    echo "$fallback_html" | buildkite-agent annotate \
+    echo "$fallback_md" | buildkite-agent annotate \
       --style "warning" \
       --context "ai-error-analysis-fallback"
   fi

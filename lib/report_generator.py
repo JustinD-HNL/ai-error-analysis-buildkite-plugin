@@ -7,6 +7,7 @@ Generates formatted reports and annotations from AI analysis results
 import json
 import os
 import sys
+import re
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime

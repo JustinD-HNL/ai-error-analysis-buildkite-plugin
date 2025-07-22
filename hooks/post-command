@@ -9,7 +9,12 @@ set +H  # Disable history expansion
 umask 022  # Secure file permissions
 
 # Plugin configuration
-PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Check if running in container with fixed path
+if [[ -d "/buildkite/plugins/ai-error-analysis" ]]; then
+  PLUGIN_DIR="/buildkite/plugins/ai-error-analysis"
+else
+  PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
 LOG_PREFIX="🤖 [AI Error Analysis]"
 
 echo "--- ${LOG_PREFIX} Analyzing command execution"
@@ -238,6 +243,9 @@ analyze_error() {
   # Step 1: Collect build context
   echo "📋 Collecting build context..."
   
+  # Escape command for JSON
+  local escaped_command=$(echo "${BUILDKITE_COMMAND:-unknown}" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr '\n' ' ')
+  
   local context_data=$(cat << EOF
 {
   "build_info": {
@@ -247,7 +255,7 @@ analyze_error() {
     "step_key": "${BUILDKITE_STEP_KEY:-unknown}",
     "branch": "${BUILDKITE_BRANCH:-unknown}",
     "commit": "${BUILDKITE_COMMIT:-unknown}",
-    "command": "${BUILDKITE_COMMAND:-unknown}",
+    "command": "${escaped_command}",
     "exit_status": ${COMMAND_EXIT_STATUS}
   },
   "log_excerpt": "$(tail -n 100 /tmp/buildkite.log 2>/dev/null | head -c 5000 | sed 's/"/\\"/g' | tr '\n' ' ' || echo 'Log not available')",
@@ -321,6 +329,9 @@ generate_report() {
   
   if ! python3 "${PLUGIN_DIR}/lib/report_generator.py" \
     "${TEMP_DIR}/analysis_result.json" \
+    "${TEMP_DIR}/sanitized_context.json" \
+    "html" \
+    "true" \
     > "${TEMP_DIR}/report.html"; then
     echo "❌ Report generation failed" >&2
     return 1

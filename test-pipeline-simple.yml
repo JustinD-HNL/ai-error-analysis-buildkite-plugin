@@ -1,0 +1,9 @@
+steps:
+  - label: ":boom: Test Error for Claude"
+    command: |
+      echo "Starting test..."
+      echo "This command will fail to trigger AI analysis"
+      echo "ERROR: Database connection refused"
+      exit 1
+    agents:
+      queue: default

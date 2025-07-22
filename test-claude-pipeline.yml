@@ -1,0 +1,34 @@
+steps:
+  - label: ":hammer: Test Claude AI Error Analysis"
+    command: |
+      echo "🧪 Testing Claude AI error analysis..."
+      echo "Starting database connection test..."
+      echo ""
+      echo "ERROR: Database connection failed"
+      echo "psql: error: connection to server at 'localhost' (127.0.0.1), port 5432 failed:"
+      echo "FATAL: password authentication failed for user 'app_user'"
+      echo "DETAIL: Connection matched pg_hba.conf line 95: 'host all all 127.0.0.1/32 md5'"
+      echo ""
+      echo "Stack trace:"
+      echo "  at PostgresClient.connect() in /app/src/db/postgres.js:42"
+      echo "  at DatabaseService.initialize() in /app/src/services/database.js:18"
+      echo "  at Application.start() in /app/src/app.js:67"
+      echo ""
+      exit 1
+    plugins:
+      - ai-error-analysis-buildkite-plugin:
+          enabled: true
+          provider: "anthropic"
+          model: "claude-3-opus-20240229"
+          max_tokens: 2000
+          include_context:
+            command_output: true
+            environment_variables: true
+            system_information: true
+          output:
+            style: "error"
+            include_confidence: true
+            save_artifact: true
+    agents:
+      queue: default
+      orbstack: true

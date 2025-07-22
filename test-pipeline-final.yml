@@ -1,0 +1,23 @@
+steps:
+  - label: ":boom: Test Claude Error Analysis"
+    command: |
+      echo "=== Starting Application ==="
+      echo "Loading configuration..."
+      echo "Connecting to database..."
+      echo ""
+      echo "ERROR: Failed to connect to PostgreSQL"
+      echo "psql: could not connect to server: Connection refused"
+      echo "  Is the server running on host 'localhost' and accepting"
+      echo "  TCP/IP connections on port 5432?"
+      echo ""
+      echo "Stack trace:"
+      echo "  at connectDB() database.js:45"
+      echo "  at main() app.js:12"
+      exit 1
+    env:
+      BUILDKITE_REPO: ""
+      BUILDKITE_REFSPEC: ""
+      BUILDKITE_COMMIT: "HEAD"
+      BUILDKITE_BRANCH: "main"
+    agents:
+      queue: default

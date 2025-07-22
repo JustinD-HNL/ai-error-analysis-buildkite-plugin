@@ -1,0 +1,24 @@
+steps:
+  - label: ":boom: Test Error with Claude Plugin"
+    command: |
+      echo "=== Starting Application ==="
+      echo "Loading configuration..."
+      echo "Connecting to database..."
+      echo ""
+      echo "ERROR: Failed to connect to PostgreSQL"
+      echo "psql: could not connect to server: Connection refused"
+      echo "  Is the server running on host 'localhost' and accepting"
+      echo "  TCP/IP connections on port 5432?"
+      echo ""
+      echo "Stack trace:"
+      echo "  at connectDB() database.js:45"
+      echo "  at main() app.js:12"
+      exit 1
+    plugins:
+      - JustinD-HNL/ai-error-analysis-buildkite-plugin#main:
+          provider: "anthropic"
+          model: "claude-3-opus-20240229"
+          max_tokens: 2000
+          debug: true
+    agents:
+      queue: default

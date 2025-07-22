@@ -1,0 +1,12 @@
+steps:
+  - label: ":hammer: Simple Claude Test"
+    command: |
+      echo "This is a test that will fail"
+      echo "ERROR: Something went wrong!"
+      exit 1
+    plugins:
+      - ai-error-analysis-buildkite-plugin:
+          provider: "anthropic"
+          model: "claude-3-opus-20240229"
+    agents:
+      queue: default

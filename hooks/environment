@@ -5,7 +5,12 @@ set -euo pipefail
 # Fixed JSON parsing issue
 
 # Plugin directory
-PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Check if running in container with fixed path
+if [[ -d "/buildkite/plugins/ai-error-analysis" ]]; then
+  PLUGIN_DIR="/buildkite/plugins/ai-error-analysis"
+else
+  PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
 
 # Initialize logging
 LOG_PREFIX="🤖 [AI Error Analysis]"
@@ -295,7 +300,7 @@ validate_repository_access() {
     
     # Security: Validate repository URL format
     if [[ -n "${repo}" ]]; then
-        if [[ ! "${repo}" =~ ^(git@|https://)[a-zA-Z0-9._/-]+$ ]]; then
+        if [[ ! "${repo}" =~ ^(git@|https://)[a-zA-Z0-9._/:@-]+$ ]]; then
             echo "❌ Invalid repository URL format: ${repo}"
             return 1
         fi

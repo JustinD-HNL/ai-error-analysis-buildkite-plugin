@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  buildkite-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.orbstack
+    container_name: buildkite-agent-ai-analysis
+    
+    environment:
+      # REQUIRED: Your Buildkite agent token
+      BUILDKITE_AGENT_TOKEN: ${BUILDKITE_AGENT_TOKEN}
+      
+      # Agent configuration
+      BUILDKITE_AGENT_NAME: ${BUILDKITE_AGENT_NAME:-orbstack-ai-agent}
+      BUILDKITE_AGENT_TAGS: ${BUILDKITE_AGENT_TAGS:-queue=default,os=linux,orbstack=true,ai-error-analysis=enabled}
+      
+      # AI Provider Configuration (set at least one)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      
+      # Plugin Configuration
+      BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER: ${AI_PROVIDER:-openai}
+      BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MODEL: ${AI_MODEL:-gpt-4o}
+      BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MAX_TOKENS: ${AI_MAX_TOKENS:-1000}
+      BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_ENABLE_CACHING: ${AI_ENABLE_CACHING:-true}
+      BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_DEBUG: ${AI_DEBUG:-false}
+      
+      # Security settings
+      BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECURITY_RUN_AS_NON_ROOT: "true"
+      BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_SECRET_SOURCE_TYPE: "env_var"
+      
+    volumes:
+      # Mount plugin source for development (optional - remove in production)
+      - .:/buildkite/plugins/ai-error-analysis:ro
+      
+      # Persist build data
+      - buildkite-builds:/buildkite/builds
+      
+      # Share Docker socket for Docker-in-Docker builds (optional)
+      # - /var/run/docker.sock:/var/run/docker.sock
+    
+    networks:
+      - buildkite-network
+    
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Agent needs write access for builds
+    
+  # Optional: Run multiple agents
+  buildkite-agent-2:
+    extends: buildkite-agent
+    container_name: buildkite-agent-ai-analysis-2
+    environment:
+      BUILDKITE_AGENT_NAME: ${BUILDKITE_AGENT_NAME:-orbstack-ai-agent-2}
+    profiles:
+      - scale
+
+  buildkite-agent-3:
+    extends: buildkite-agent
+    container_name: buildkite-agent-ai-analysis-3
+    environment:
+      BUILDKITE_AGENT_NAME: ${BUILDKITE_AGENT_NAME:-orbstack-ai-agent-3}
+    profiles:
+      - scale
+
+volumes:
+  buildkite-builds:
+    driver: local
+
+networks:
+  buildkite-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

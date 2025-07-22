@@ -1,0 +1,100 @@
+# Buildkite Agent with AI Error Analysis Plugin for OrbStack
+FROM buildkite/agent:3-ubuntu
+
+# Install Python and system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    jq \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash buildkite-user
+
+# Set up plugin directory structure
+RUN mkdir -p /buildkite/plugins/ai-error-analysis && \
+    chown -R buildkite-user:buildkite-user /buildkite
+
+# Copy plugin files
+COPY --chown=buildkite-user:buildkite-user . /buildkite/plugins/ai-error-analysis/
+
+# Switch to non-root user
+USER buildkite-user
+WORKDIR /home/buildkite-user
+
+# Create Python virtual environment and install dependencies
+RUN python3.11 -m venv /home/buildkite-user/.venv && \
+    /home/buildkite-user/.venv/bin/pip install --upgrade pip && \
+    /home/buildkite-user/.venv/bin/pip install -r /buildkite/plugins/ai-error-analysis/requirements.txt
+
+# Set up environment
+ENV PATH="/home/buildkite-user/.venv/bin:$PATH"
+ENV PYTHONPATH="/buildkite/plugins/ai-error-analysis/lib:$PYTHONPATH"
+ENV BUILDKITE_PLUGINS_PATH="/buildkite/plugins"
+ENV BUILDKITE_HOOKS_PATH="/buildkite/hooks"
+ENV BUILDKITE_BUILD_PATH="/buildkite/builds"
+
+# Create hooks directory and symlink plugin hooks
+RUN mkdir -p /buildkite/hooks && \
+    ln -sf /buildkite/plugins/ai-error-analysis/hooks/post-command /buildkite/hooks/post-command && \
+    ln -sf /buildkite/plugins/ai-error-analysis/hooks/environment /buildkite/hooks/environment && \
+    ln -sf /buildkite/plugins/ai-error-analysis/hooks/pre-exit /buildkite/hooks/pre-exit
+
+# Create startup script
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+echo "🚀 Buildkite Agent with AI Error Analysis Plugin for OrbStack"\n\
+echo "============================================================"\n\
+echo ""\n\
+\n\
+# Check for required environment variables\n\
+if [ -z "$BUILDKITE_AGENT_TOKEN" ]; then\n\
+    echo "❌ ERROR: BUILDKITE_AGENT_TOKEN is required"\n\
+    echo "Set it in docker-compose.yml or pass with -e flag"\n\
+    exit 1\n\
+fi\n\
+\n\
+# Check for AI provider credentials\n\
+if [ -z "$OPENAI_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ]; then\n\
+    echo "⚠️  WARNING: No AI provider API key detected"\n\
+    echo "Plugin will not be able to analyze errors without one of:"\n\
+    echo "  - OPENAI_API_KEY"\n\
+    echo "  - ANTHROPIC_API_KEY"\n\
+    echo "  - GOOGLE_API_KEY"\n\
+else\n\
+    echo "✅ AI provider credentials detected"\n\
+fi\n\
+\n\
+echo ""\n\
+echo "📁 Plugin location: /buildkite/plugins/ai-error-analysis"\n\
+echo "🐍 Python version: $(python3 --version)"\n\
+echo "🏃 Agent version: $(buildkite-agent --version)"\n\
+echo ""\n\
+\n\
+# Configure agent\n\
+cat > /home/buildkite-user/buildkite-agent.cfg << EOF\n\
+token="$BUILDKITE_AGENT_TOKEN"\n\
+name="${BUILDKITE_AGENT_NAME:-orbstack-agent-$(hostname)}"\n\
+tags="${BUILDKITE_AGENT_TAGS:-queue=default,os=linux,orbstack=true,ai-error-analysis=enabled}"\n\
+build-path="$BUILDKITE_BUILD_PATH"\n\
+plugins-path="$BUILDKITE_PLUGINS_PATH"\n\
+hooks-path="$BUILDKITE_HOOKS_PATH"\n\
+disconnect-after-job="${BUILDKITE_AGENT_DISCONNECT_AFTER_JOB:-false}"\n\
+disconnect-after-idle-timeout="${BUILDKITE_AGENT_DISCONNECT_AFTER_IDLE_TIMEOUT:-0}"\n\
+EOF\n\
+\n\
+echo "🚀 Starting Buildkite agent..."\n\
+exec buildkite-agent start --config /home/buildkite-user/buildkite-agent.cfg\n\
+' > /home/buildkite-user/start-agent.sh && chmod +x /home/buildkite-user/start-agent.sh
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD buildkite-agent ping || exit 1
+
+# Override base image entrypoint and command
+ENTRYPOINT []
+CMD ["/bin/bash", "/home/buildkite-user/start-agent.sh"]

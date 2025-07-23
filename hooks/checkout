@@ -129,13 +129,23 @@ EOF
   # Run AI analysis
   ANALYSIS_OUTPUT=$(mktemp /tmp/ai-analysis.XXXXXX.json)
   
-  # Set API key for the analysis
-  export AI_ERROR_ANALYSIS_API_KEY="${ANTHROPIC_API_KEY:-${OPENAI_API_KEY:-${GOOGLE_API_KEY:-}}}"
+  # Set API key for the analysis based on provider
+  case "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER}" in
+    "openai")
+      export AI_ERROR_ANALYSIS_API_KEY="${OPENAI_API_KEY}"
+      ;;
+    "anthropic")
+      export AI_ERROR_ANALYSIS_API_KEY="${ANTHROPIC_API_KEY}"
+      ;;
+    "gemini")
+      export AI_ERROR_ANALYSIS_API_KEY="${GOOGLE_API_KEY}"
+      ;;
+  esac
   
   if python3 "${PLUGIN_DIR}/lib/analyze.py" \
-    --provider "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER:-anthropic}" \
-    --model "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MODEL:-claude-opus-4-20250514}" \
-    --max-tokens "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MAX_TOKENS:-1000}" \
+    --provider "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_PROVIDER}" \
+    --model "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MODEL}" \
+    --max-tokens "${BUILDKITE_PLUGIN_AI_ERROR_ANALYSIS_MAX_TOKENS}" \
     --input "${CONTEXT_FILE}" \
     --output "${ANALYSIS_OUTPUT}"; then
     

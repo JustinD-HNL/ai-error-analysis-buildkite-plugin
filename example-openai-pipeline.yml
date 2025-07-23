@@ -1,0 +1,11 @@
+# Example pipeline using OpenAI GPT models
+steps:
+  - label: "🧪 Test with OpenAI"
+    command: |
+      echo "This is a test that will fail"
+      exit 1
+    plugins:
+      - JustinD-HNL/ai-error-analysis-buildkite-plugin#main:
+          provider: "openai"
+          model: "gpt-4o-mini"
+          debug: true

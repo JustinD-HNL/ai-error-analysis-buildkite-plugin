@@ -35,13 +35,20 @@ class AIProviderError(Exception):
 class AIAnalyzer:
     """Main AI analysis engine with 2025 provider support"""
     
-    # Current model mappings
+    # Current model mappings - Updated January 2025
     SUPPORTED_MODELS = {
         "openai": {
-            "gpt-4.1": {"endpoint": "chat/completions", "max_tokens": 1000000, "cost_per_1k": 0.05},
-            "gpt-4.1-mini": {"endpoint": "chat/completions", "max_tokens": 1000000, "cost_per_1k": 0.002},
-            "gpt-4o": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.03},
-            "gpt-4o-mini": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.0015}
+            "gpt-4o": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.005},
+            "gpt-4o-mini": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.00015},
+            "gpt-4o-2024-11-20": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.0025},
+            "gpt-4o-2024-08-06": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.0025},
+            "gpt-4o-mini-2024-07-18": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.00015},
+            "o1-preview": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.015},
+            "o1-preview-2024-09-12": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.015},
+            "o1-mini": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.003},
+            "o1-mini-2024-09-12": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.003},
+            "gpt-4-turbo": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.01},
+            "gpt-4-turbo-2024-04-09": {"endpoint": "chat/completions", "max_tokens": 128000, "cost_per_1k": 0.01}
         },
         "anthropic": {
             "claude-opus-4-20250514": {"endpoint": "messages", "max_tokens": 4096, "cost_per_1k": 0.15},

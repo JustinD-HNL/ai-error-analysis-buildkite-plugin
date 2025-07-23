@@ -1,2 +1,6 @@
 .env
 .env.claude
+.env.openai
+.env.anthropic
+.env.gemini
+.env.*

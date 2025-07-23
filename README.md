@@ -17,8 +17,10 @@
 |----------|-------|----------------|--------------|
 | **Anthropic** | `claude-opus-4-20250514` | 200K tokens | Best coding model (72.5% SWE-bench), extended thinking |
 | **Anthropic** | `claude-sonnet-4-20250514` | 200K tokens | Balanced performance, hybrid reasoning |
-| **OpenAI** | `gpt-4.1` | 1M tokens | Latest flagship, superior coding & instruction following |
-| **OpenAI** | `gpt-4.1-mini` | 1M tokens | 83% cost reduction vs GPT-4o, beats GPT-4o in benchmarks |
+| **OpenAI** | `gpt-4o` | 128K tokens | Latest flagship model with vision, fast performance |
+| **OpenAI** | `gpt-4o-mini` | 128K tokens | Cost-effective model, 99% cost reduction vs GPT-4 |
+| **OpenAI** | `o1-preview` | 128K tokens | Advanced reasoning with chain-of-thought |
+| **OpenAI** | `o1-mini` | 128K tokens | Faster reasoning model for STEM tasks |
 | **Google** | `gemini-2.0-flash` | 1M tokens | Generally available, multimodal, native tools |
 | **Google** | `gemini-2.0-pro-exp` | 2M tokens | Experimental, best coding performance |
 
@@ -26,7 +28,7 @@
 
 | Provider | Models | Authentication | Notes |
 |----------|--------|----------------|-------|
-| **OpenAI** | `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `gpt-4o-mini` | Bearer token | GPT-4.1 series are the newest with 1M token context |
+| **OpenAI** | `gpt-4o`, `gpt-4o-mini`, `o1-preview`, `o1-mini`, `gpt-4-turbo` | Bearer token | GPT-4o series are multimodal, o1 series have advanced reasoning |
 | **Anthropic** | `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`, `claude-3-opus-20240229` | x-api-key header | Claude Opus 4 is the most capable model |
 | **Google** | `gemini-2.0-flash`, `gemini-2.0-pro-exp`, `gemini-1.5-pro`, `gemini-1.5-flash` | API key parameter | Gemini 2.0 Flash is GA, 2.0 Pro is experimental |
 

@@ -100,9 +100,9 @@ def validate_providers():
         if not isinstance(providers, list):
             providers = [providers]
         
-        # Current valid models
+        # Current valid models - Updated January 2025
         valid_models = {
-            'openai': ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini'],
+            'openai': ['gpt-4o', 'gpt-4o-mini', 'gpt-4o-2024-11-20', 'gpt-4o-2024-08-06', 'gpt-4o-mini-2024-07-18', 'o1-preview', 'o1-preview-2024-09-12', 'o1-mini', 'o1-mini-2024-09-12', 'gpt-4-turbo', 'gpt-4-turbo-2024-04-09'],
             'anthropic': ['claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'],
             'gemini': ['gemini-2.0-flash', 'gemini-2.0-pro-exp', 'gemini-1.5-pro', 'gemini-1.5-flash']
         }
@@ -256,7 +256,11 @@ def validate_api_keys():
         
         for provider in providers:
             name = provider.get('name', '').lower()
-            api_key_env = provider.get('api_key_env', f'{name.upper()}_API_KEY')
+            # Special case for Gemini which uses GOOGLE_API_KEY
+            if name == 'gemini':
+                api_key_env = 'GOOGLE_API_KEY'
+            else:
+                api_key_env = provider.get('api_key_env', f'{name.upper()}_API_KEY')
             
             if not os.environ.get(api_key_env):
                 missing_keys.append(f'{name}: {api_key_env}')

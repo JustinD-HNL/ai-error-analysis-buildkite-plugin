@@ -3,4 +3,3 @@
 .env.openai
 .env.anthropic
 .env.gemini
-.env.*
